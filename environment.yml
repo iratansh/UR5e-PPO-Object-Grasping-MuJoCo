@@ -1,0 +1,57 @@
+name: homestri-ur5e-rl
+channels:
+  - conda-forge
+  - pytorch
+  - nvidia
+dependencies:
+  - python=3.9.23
+  - pip
+  - numpy
+  - scipy
+  - matplotlib
+  - pyyaml
+  - tqdm
+  - opencv
+  - pillow
+  - imageio
+  - ffmpeg
+  - git
+  
+  # CUDA and PyTorch (CUDA 11.8 or 12.1 compatible)
+  - pytorch::pytorch>=2.0.0
+  - pytorch::torchvision
+  - pytorch::torchaudio
+  - pytorch::pytorch-cuda=11.8  # or 12.1 depending on your CUDA version
+  
+  # MuJoCo and robotics
+  - conda-forge::mujoco>=2.3.0
+  
+  # Jupyter for analysis
+  - jupyter
+  - notebook
+  - ipykernel
+  
+  # Development tools
+  - black
+  - flake8
+  
+  - pip:
+    # Reinforcement Learning
+    - gymnasium>=0.29.0
+    - stable-baselines3>=2.0.0
+    - sb3-contrib
+    - tensorboard
+    - wandb
+    
+    # Robotics specific
+    - robotics-toolbox-python
+    - spatialmath-python
+    - swift-sim
+    
+    # Additional utilities
+    - imageio-ffmpeg
+    - moviepy
+    - pybullet  # For additional physics simulation if needed
+    
+    # Install homestri-ur5e-rl in development mode
+    - -e .

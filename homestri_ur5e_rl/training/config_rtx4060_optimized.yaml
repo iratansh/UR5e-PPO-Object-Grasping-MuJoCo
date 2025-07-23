@@ -1,0 +1,180 @@
+# RTX 4060 Optimized Configuration
+# Hardware: RTX 4060 8GB, 16GB RAM, Ryzen 5, Ubuntu 24.04
+# Target: Multi-day stable training with 70%+ real-world success rate
+
+environment:
+  n_envs: 2 # Conservative start, change later
+  
+  camera_resolution: 64  # Proven stable from M2 validation, also change later
+  
+  frame_skip: 5  
+  xml_file: "custom_scene.xml"  
+  control_mode: "joint"  
+  use_stuck_detection: true
+  
+  use_domain_randomization: false 
+  
+  initial_curriculum_level: 0.1  
+  render_mode: null
+
+training:
+  total_timesteps: 27_000_000
+  learning_rate: 0.0003
+
+  n_steps: 512
+
+  batch_size: 32
+  gradient_accumulation_steps: 4  
+  
+  n_epochs: 10  
+  gamma: 0.99  
+  gae_lambda: 0.95  
+  clip_range: 0.2  
+  clip_range_vf: null
+  normalize_advantage: true
+  ent_coef: 0.01  
+  vf_coef: 0.5
+  max_grad_norm: 0.5 
+  
+  target_kl: 0.03  
+  
+  use_mixed_precision: true
+  mixed_precision_dtype: "bfloat16"  
+  optimizer_offload: true  
+  
+  device: "cuda"
+  num_threads: 4 
+
+evaluation:
+  eval_freq: 25_600 
+  n_eval_episodes: 10  
+  deterministic: true
+
+logging:
+  save_freq: 12_800  
+  checkpoint_keep: 5 
+  log_interval: 5 
+  reset_num_timesteps: false
+  tb_log_name: "ur5e_rtx4060"
+  
+  log_memory_usage: true
+  memory_profile_freq: 25_600 
+
+curriculum:
+  enable: true
+  
+  success_threshold: 0.7 
+  
+  phases:
+    - name: "approach_learning"
+      description: "Learn safe object approach"
+      timesteps: 5_000_000  
+      domain_randomization_level: 0.0
+      
+    - name: "contact_refinement" 
+      description: "Refine gripper positioning and contact"
+      timesteps: 4_000_000
+      domain_randomization_level: 0.2  
+      
+    - name: "grasping"
+      description: "Master object grasping and lifting"
+      timesteps: 8_000_000
+      domain_randomization_level: 0.4
+      
+    - name: "manipulation"
+      description: "Complete pick and place tasks"
+      timesteps: 6_000_000
+      domain_randomization_level: 0.7
+      
+    - name: "mastery"
+      description: "Achieve robust, collision-free manipulation"
+      timesteps: 4_000_000
+      domain_randomization_level: 1.0 
+
+domain_randomization:
+  visual:
+    hsv_shift_range: [-0.1, 0.1]  
+    texture_randomize_prob: 0.2  
+    lighting_intensity_range: [0.8, 1.2]  
+    camera_noise_std: 0.01  
+    
+  physical:
+    mass_range: [0.8, 1.2]  
+    friction_range: [0.5, 1.5]  
+    damping_range: [0.95, 1.05]  
+    
+  enable_adr: true
+  adr_performance_threshold: 0.8
+  adr_expansion_rate: 0.05  
+  adr_update_freq: 100_000
+
+memory_optimization:
+  pytorch_cuda_alloc_conf:
+    expandable_segments: true  
+    max_split_size_mb: 128
+    garbage_collection_threshold: 0.7
+    
+  buffer_device: "cpu" 
+  enable_memory_profiler: true
+  auto_restart_on_oom: true 
+  memory_limit_gb: 6.0  
+
+vectorization:
+  vec_env_type: "SubprocVecEnv"  
+  start_method: "forkserver"  
+  cpu_affinity: true
+  worker_cpu_cores: [0, 1] 
+
+monitoring:
+  track_explained_variance: true
+  track_kl_divergence: true
+  gpu_utilization_log: true
+  
+  alert_thresholds:
+    kl_divergence_max: 0.05
+    explained_variance_min: 0.5
+    gpu_memory_percent_max: 75 
+
+checkpointing:
+  checkpoint_freq: 12_800 
+  keep_last_n: 5
+  milestone_checkpoints: [1_000_000, 5_000_000, 15_000_000, 27_000_000]
+  auto_resume: true
+  verify_checkpoint_integrity: true
+
+expected_performance:
+  steps_per_second: 80-120  
+  episodes_per_hour: 160-240  
+  
+  # Timeline estimates
+  approach_learning: "15-20 hours"  # 5M steps
+  contact_refinement: "25-30 hours"  # 9M steps total
+  grasping: "45-55 hours"  # 17M steps total  
+  manipulation: "65-75 hours"  # 23M steps total
+  mastery: "85-95 hours"  # 27M steps total
+  
+  gpu_memory: "5.5-6.0GB"  
+  system_ram: "7-9GB" 
+
+hardware:
+  gpu_memory_fraction: 0.75 
+  cpu_workers: 2  
+  prefetch_factor: 2
+
+validation_targets:
+  physics_stability: ">99.5%" 
+  reward_range: "[-10, +50]"    
+  collision_rate: "<0.1%"       
+  success_progression:
+    approach_learning: "10%"   
+    contact_refinement: "30%"   
+    grasping: "50%"            
+    manipulation: "70%"        
+    mastery: "85%"             
+
+design_philosophy:
+  stability_priority: "M2 proven settings take precedence"
+  memory_safety: "Prevent RTX 4060 bottlenecks"
+  progressive_scaling: "Start conservative, expand capabilities"
+  multi_day_resilience: "Prevent training collapse"
+  sim_to_real_focus: "Balanced approach for real robot transfer"

@@ -1,0 +1,469 @@
+<mujoco model="ur5e_optimized_pickup">
+  <compiler angle="radian" meshdir="assets" autolimits="true" />
+
+  <option timestep="0.001" integrator="implicitfast" solver="Newton" 
+          iterations="20" tolerance="1e-10" cone="elliptic"
+          noslip_iterations="3" noslip_tolerance="1e-6">
+    <flag multiccd="enable"/>
+  </option>
+  
+  <size njmax="2000" nconmax="500" nstack="3000000"/>
+
+  <statistic center="0.5 0.0 0.5" extent="1.0" />
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0.1 0.1 0.1" />
+    <rgba haze="0.15 0.25 0.35 1" />
+    <global azimuth="120" elevation="-25" />
+    <quality shadowsize="2048" offsamples="8" />
+  </visual>
+
+  <default>
+    <geom solref="0.02 1" solimp="0.9 0.95 0.001 0.5 2"
+          friction="1.0 0.005 0.001" margin="0.001" condim="4"/>
+    <joint damping="5.0" armature="0.1"/>
+  </default>
+
+  <default>
+    <default class="ur5e">
+      <material specular="0.5" shininess="0.25" />
+      <joint axis="0 1 0" range="-6.28319 6.28319" limited="true" 
+             damping="5.0" armature="0.1" frictionloss="0.2" stiffness="0"/>
+      <default class="ur5e:size3">
+        <default class="ur5e:size3_limited">
+          <joint range="-3.1415 3.1415" />
+        </default>
+      </default>
+      <default class="ur5e:size1">
+        <general gainprm="100 0 0" biasprm="0 -100 -10" forcerange="-100 100" />
+      </default>
+      <default class="ur5e:visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2" />
+      </default>
+      <default class="ur5e:collision">
+        <geom type="capsule" group="3" />
+        <default class="ur5e:eef_collision">
+          <geom type="cylinder" />
+        </default>
+      </default>
+      <default class="ur5e:manipulation">
+        <geom solimp="0.95 0.95 0.01" solref="0.008 1" 
+              friction="1.0 0.005 0.001" margin="0.001"/>
+        <joint damping="5.0" armature="0.1"/>
+      </default>
+      <site size="0.001" rgba="0.5 0.5 0.5 0.3" group="4" />
+    </default>
+  </default>
+
+  <default>
+    <default class="2f85">
+      <mesh scale="0.001 0.001 0.001" />
+      <general biastype="affine" />
+      <joint axis="1 0 0" />
+      
+      <default class="2f85:driver">
+        <joint range="0 0.8" armature="0.005" damping="0.5" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1" />
+      </default>
+      <default class="2f85:follower">
+        <joint range="-0.872664 0.872664" pos="0 -0.018 0.0065" damping="0.1" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1" />
+      </default>
+      <default class="2f85:spring_link">
+        <joint range="-0.29670597283 0.8" stiffness="0.05" springref="2.62" damping="0.00125" />
+      </default>
+      <default class="2f85:coupler">
+        <joint range="-1.57 0" damping="0.1" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1" />
+      </default>
+
+      <default class="2f85:visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2" />
+      </default>
+      <default class="2f85:collision">
+        <geom type="mesh" group="3" condim="4" />
+        <default class="2f85:pad_box1">
+          <geom mass="0" type="box" pos="0 -0.0026 0.028125" size="0.011 0.004 0.009375" 
+                friction="1.5 0.005 0.0001" solimp="0.9 0.95 0.001 0.5 2" solref="0.02 1" 
+                priority="1" rgba="0.55 0.55 0.55 1" margin="0.001" condim="4"/>
+        </default>
+        <default class="2f85:pad_box2">
+          <geom mass="0" type="box" pos="0 -0.0026 0.009375" size="0.011 0.004 0.009375" 
+                friction="1.5 0.005 0.0001" solimp="0.9 0.95 0.001 0.5 2" solref="0.02 1" 
+                priority="1" rgba="0.45 0.45 0.45 1" margin="0.001" condim="4"/>
+        </default>
+      </default>
+    </default>
+  </default>
+
+  <!-- Enhanced assets for better visual realism -->
+  <asset>
+    <!-- Skybox and environment -->
+    <texture type="skybox" builtin="gradient" rgb1="0.4 0.6 0.8" rgb2="0.1 0.2 0.4" width="512" height="3072" />
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.25 0.3 0.35" rgb2="0.15 0.2 0.25" markrgb="0.8 0.8 0.8" width="300" height="300" />
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="8 8" reflectance="0.15" />
+    
+    <!-- Enhanced table material with realistic properties -->
+    <texture type="2d" name="wood_texture" builtin="gradient" rgb1="0.6 0.4 0.2" rgb2="0.5 0.3 0.15" width="128" height="128" />
+    <material name="table_mat" texture="wood_texture" rgba="0.7 0.5 0.3 1" specular="0.2" shininess="0.05" reflectance="0.1" />
+    
+    <!-- Object materials optimized for camera visibility -->
+    <material name="cube_mat" rgba="0.8 0.2 0.2 1" specular="0.4" shininess="0.2" />
+    <material name="sphere_mat" rgba="0.2 0.8 0.2 1" specular="0.4" shininess="0.2" />
+    <material name="cylinder_mat" rgba="0.2 0.2 0.8 1" specular="0.4" shininess="0.2" />
+    
+    <!-- Camera and sensor materials -->
+    <material name="camera_mat" rgba="0.1 0.1 0.1 1" specular="0.8" shininess="0.5" />
+    <material name="sensor_mat" rgba="0.3 0.3 0.3 1" />
+  </asset>
+
+  <!-- UR5e assets -->
+  <asset>
+    <material class="ur5e" name="ur5e:black" rgba="0.033 0.033 0.033 1" />
+    <material class="ur5e" name="ur5e:jointgray" rgba="0.278 0.278 0.278 1" />
+    <material class="ur5e" name="ur5e:linkgray" rgba="0.82 0.82 0.82 1" />
+    <material class="ur5e" name="ur5e:urblue" rgba="0.49 0.678 0.8 1" />
+
+    <mesh name="ur5e:base_0" file="universal_robots_ur5e/base_0.obj" />
+    <mesh name="ur5e:base_1" file="universal_robots_ur5e/base_1.obj" />
+    <mesh name="ur5e:shoulder_0" file="universal_robots_ur5e/shoulder_0.obj" />
+    <mesh name="ur5e:shoulder_1" file="universal_robots_ur5e/shoulder_1.obj" />
+    <mesh name="ur5e:shoulder_2" file="universal_robots_ur5e/shoulder_2.obj" />
+    <mesh name="ur5e:upperarm_0" file="universal_robots_ur5e/upperarm_0.obj" />
+    <mesh name="ur5e:upperarm_1" file="universal_robots_ur5e/upperarm_1.obj" />
+    <mesh name="ur5e:upperarm_2" file="universal_robots_ur5e/upperarm_2.obj" />
+    <mesh name="ur5e:upperarm_3" file="universal_robots_ur5e/upperarm_3.obj" />
+    <mesh name="ur5e:forearm_0" file="universal_robots_ur5e/forearm_0.obj" />
+    <mesh name="ur5e:forearm_1" file="universal_robots_ur5e/forearm_1.obj" />
+    <mesh name="ur5e:forearm_2" file="universal_robots_ur5e/forearm_2.obj" />
+    <mesh name="ur5e:forearm_3" file="universal_robots_ur5e/forearm_3.obj" />
+    <mesh name="ur5e:wrist1_0" file="universal_robots_ur5e/wrist1_0.obj" />
+    <mesh name="ur5e:wrist1_1" file="universal_robots_ur5e/wrist1_1.obj" />
+    <mesh name="ur5e:wrist1_2" file="universal_robots_ur5e/wrist1_2.obj" />
+    <mesh name="ur5e:wrist2_0" file="universal_robots_ur5e/wrist2_0.obj" />
+    <mesh name="ur5e:wrist2_1" file="universal_robots_ur5e/wrist2_1.obj" />
+    <mesh name="ur5e:wrist2_2" file="universal_robots_ur5e/wrist2_2.obj" />
+    <mesh name="ur5e:wrist3" file="universal_robots_ur5e/wrist3.obj" />
+  </asset>
+
+  <!-- 2f85 gripper assets -->
+  <asset>
+    <material name="2f85:metal" rgba="0.58 0.58 0.58 1" />
+    <material name="2f85:silicone" rgba="0.1882 0.1882 0.1882 1" />
+    <material name="2f85:gray" rgba="0.4627 0.4627 0.4627 1" />
+    <material name="2f85:black" rgba="0.149 0.149 0.149 1" />
+
+    <mesh class="2f85" name="2f85:base_mount" file="robotiq_2f85/base_mount.stl" />
+    <mesh class="2f85" name="2f85:base" file="robotiq_2f85/base.stl" />
+    <mesh class="2f85" name="2f85:driver" file="robotiq_2f85/driver.stl" />
+    <mesh class="2f85" name="2f85:coupler" file="robotiq_2f85/coupler.stl" />
+    <mesh class="2f85" name="2f85:follower" file="robotiq_2f85/follower.stl" />
+    <mesh class="2f85" name="2f85:pad" file="robotiq_2f85/pad.stl" />
+    <mesh class="2f85" name="2f85:silicone_pad" file="robotiq_2f85/silicone_pad.stl" />
+    <mesh class="2f85" name="2f85:spring_link" file="robotiq_2f85/spring_link.stl" />
+  </asset>
+
+  <worldbody>
+    <!--  lighting setup -->
+    <light name="main_light" pos="0.5 0.5 2.0" dir="0 0 -1" directional="true" diffuse="0.8 0.8 0.8" specular="0.3 0.3 0.3" />
+    <light name="fill_light" pos="0.5 -0.5 1.5" dir="0 0.3 -1" directional="false" diffuse="0.4 0.4 0.4" />
+    <light name="back_light" pos="0.0 0.5 1.0" dir="0.5 -0.3 -0.5" directional="false" diffuse="0.3 0.3 0.3" />
+    
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" 
+          solimp="0.9 0.95 0.001 0.5 2" solref="0.02 1" friction="1.0 0.005 0.001" condim="4"/>
+
+    <!-- table  -->
+    <body name="table" pos="0.5 0 0">
+      <geom name="table_surface" type="box" size="0.9 0.9 0.02" pos="0 0 0.4" material="table_mat" 
+            solimp="0.9 0.95 0.001 0.5 2" solref="0.02 1" friction="1.0 0.005 0.001" condim="4"/>
+      
+      <!-- Table legs for realism -->
+      <geom name="table_leg1" type="cylinder" size="0.02 0.19" pos="0.85 0.85 0.19" material="table_mat" />
+      <geom name="table_leg2" type="cylinder" size="0.02 0.19" pos="-0.85 0.85 0.19" material="table_mat" />
+      <geom name="table_leg3" type="cylinder" size="0.02 0.19" pos="0.85 -0.85 0.19" material="table_mat" />
+      <geom name="table_leg4" type="cylinder" size="0.02 0.19" pos="-0.85 -0.85 0.19" material="table_mat" />
+      
+      <!-- This is positioned to be visible from the optimized home position -->
+      <!-- INVISIBLE spawn area marker (alpha=0) for positioning calculations only -->
+      <geom name="spawn_area_marker" type="box" size="0.25 0.40 0.001" pos="-0.60 0.15 0.421" rgba="0.2 0.8 0.2 0.0" contype="0" conaffinity="0" />
+    </body>
+
+    <!-- Target area markers - Enhanced for testing visibility -->
+    <body name="target_markers" pos="0.5 0 0">
+      <!-- Main target zones (green cylinders) -->
+      <geom name="target1" type="cylinder" size="0.04 0.001" pos="-0.15 0.0 0.421" rgba="0.2 0.8 0.2 0.7" contype="0" conaffinity="0" />
+      <geom name="target2" type="cylinder" size="0.04 0.001" pos="0.15 0.0 0.421" rgba="0.2 0.8 0.2 0.7" contype="0" conaffinity="0" />
+      <geom name="target3" type="cylinder" size="0.04 0.001" pos="0.0 -0.15 0.421" rgba="0.2 0.8 0.2 0.7" contype="0" conaffinity="0" />
+      <geom name="target4" type="cylinder" size="0.04 0.001" pos="0.0 0.15 0.421" rgba="0.2 0.8 0.2 0.7" contype="0" conaffinity="0" />
+      
+      <!-- Center target marker (main placement zone) -->
+      <geom name="target_center" type="cylinder" size="0.05 0.002" pos="0.0 0.0 0.421" rgba="0.9 0.2 0.2 0.8" contype="0" conaffinity="0" />
+      
+      <!-- Success tolerance boundary visualization (5cm radius) -->
+      <geom name="success_boundary" type="cylinder" size="0.05 0.0005" pos="0.0 0.0 0.4205" rgba="1.0 1.0 0.0 0.6" contype="0" conaffinity="0" />
+    </body>
+
+    <body name="cube_object" pos="0.5 0.3 0.47">
+      <geom name="cube" type="box" size="0.025 0.025 0.025" material="cube_mat" mass="0.1" 
+            friction="1.0 0.005 0.001" condim="4" solimp="0.9 0.95 0.001 0.5 2" solref="0.02 1" margin="0.001"/>
+      <joint name="cube_joint" type="free" damping="0.01" armature="0.001"/>
+    </body>
+
+    <body name="sphere_object" pos="0.45 0.25 0.47">
+      <geom name="sphere" type="sphere" size="0.025" material="sphere_mat" mass="0.1" 
+            friction="1.0 0.005 0.001" condim="4" solimp="0.9 0.95 0.001 0.5 2" solref="0.02 1" margin="0.001"/>
+      <joint name="sphere_joint" type="free" damping="0.01" armature="0.001"/>
+    </body>
+
+    <body name="cylinder_object" pos="0.55 0.25 0.47">
+      <geom name="cylinder" type="cylinder" size="0.02 0.04" material="cylinder_mat" mass="0.1" 
+            friction="1.0 0.005 0.001" condim="4" solimp="0.9 0.95 0.001 0.5 2" solref="0.02 1" margin="0.001"/>
+      <joint name="cylinder_joint" type="free" damping="0.01" armature="0.001"/>
+    </body>
+
+    <!-- UR5e robot positioned for optimal camera view -->
+    <body name="robot0:ur5e:base" pos="0.5 0 0.42" childclass="ur5e">
+      <inertial mass="4.0" pos="0 0 0" diaginertia="0.00443333156 0.00443333156 0.0072" />
+      <geom mesh="ur5e:base_0" material="ur5e:black" class="ur5e:visual" />
+      <geom mesh="ur5e:base_1" material="ur5e:jointgray" class="ur5e:visual" />
+      
+      <body name="robot0:ur5e:shoulder_link" pos="0 0 0.163" childclass="ur5e:manipulation">
+        <inertial mass="3.7" pos="0 0 0" diaginertia="0.0102675 0.0102675 0.00666" />
+        <joint name="robot0:ur5e:shoulder_pan_joint" class="ur5e:size3" axis="0 0 1" />
+        <geom mesh="ur5e:shoulder_0" material="ur5e:urblue" class="ur5e:visual" />
+        <geom mesh="ur5e:shoulder_1" material="ur5e:black" class="ur5e:visual" />
+        <geom mesh="ur5e:shoulder_2" material="ur5e:jointgray" class="ur5e:visual" />
+        <geom class="ur5e:collision" size="0.06 0.06" pos="0 0 -0.04" />
+        
+        <body name="robot0:ur5e:upper_arm_link" pos="0 0.138 0" quat="1 0 1 0" childclass="ur5e:manipulation">
+          <inertial mass="8.393" pos="0 0 0.2125" diaginertia="0.133886 0.133886 0.0151074" />
+          <joint name="robot0:ur5e:shoulder_lift_joint" class="ur5e:size3" />
+          <geom mesh="ur5e:upperarm_0" material="ur5e:linkgray" class="ur5e:visual" />
+          <geom mesh="ur5e:upperarm_1" material="ur5e:black" class="ur5e:visual" />
+          <geom mesh="ur5e:upperarm_2" material="ur5e:jointgray" class="ur5e:visual" />
+          <geom mesh="ur5e:upperarm_3" material="ur5e:urblue" class="ur5e:visual" />
+          <geom class="ur5e:collision" pos="0 -0.04 0" quat="1 1 0 0" size="0.06 0.06" />
+          <geom class="ur5e:collision" size="0.05 0.2" pos="0 0 0.2" />
+          
+          <body name="robot0:ur5e:forearm_link" pos="0 -0.131 0.425" childclass="ur5e:manipulation">
+            <inertial mass="2.275" pos="0 0 0.196" diaginertia="0.0311796 0.0311796 0.004095" />
+            <joint name="robot0:ur5e:elbow_joint" class="ur5e:size3_limited" />
+            <geom mesh="ur5e:forearm_0" material="ur5e:urblue" class="ur5e:visual" />
+            <geom mesh="ur5e:forearm_1" material="ur5e:linkgray" class="ur5e:visual" />
+            <geom mesh="ur5e:forearm_2" material="ur5e:black" class="ur5e:visual" />
+            <geom mesh="ur5e:forearm_3" material="ur5e:jointgray" class="ur5e:visual" />
+            <geom class="ur5e:collision" pos="0 0.08 0" quat="1 1 0 0" size="0.055 0.06" />
+            <geom class="ur5e:collision" size="0.038 0.19" pos="0 0 0.2" />
+            
+            <body name="robot0:ur5e:wrist_1_link" pos="0 0 0.392" quat="1 0 1 0" childclass="ur5e:manipulation">
+              <inertial mass="1.219" pos="0 0.127 0" diaginertia="0.0025599 0.0025599 0.0021942" />
+              <joint name="robot0:ur5e:wrist_1_joint" class="ur5e:size1" />
+              <geom mesh="ur5e:wrist1_0" material="ur5e:black" class="ur5e:visual" />
+              <geom mesh="ur5e:wrist1_1" material="ur5e:urblue" class="ur5e:visual" />
+              <geom mesh="ur5e:wrist1_2" material="ur5e:jointgray" class="ur5e:visual" />
+              <geom class="ur5e:collision" pos="0 0.05 0" quat="1 1 0 0" size="0.04 0.07" />
+              
+              <body name="robot0:ur5e:wrist_2_link" pos="0 0.127 0" childclass="ur5e:manipulation">
+                <inertial mass="1.219" pos="0 0 0.1" diaginertia="0.0025599 0.0025599 0.0021942" />
+                <joint name="robot0:ur5e:wrist_2_joint" axis="0 0 1" class="ur5e:size1" />
+                <geom mesh="ur5e:wrist2_0" material="ur5e:black" class="ur5e:visual" />
+                <geom mesh="ur5e:wrist2_1" material="ur5e:urblue" class="ur5e:visual" />
+                <geom mesh="ur5e:wrist2_2" material="ur5e:jointgray" class="ur5e:visual" />
+                <geom class="ur5e:collision" size="0.04 0.06" pos="0 0 0.04" />
+                <geom class="ur5e:collision" pos="0 0.02 0.1" quat="1 1 0 0" size="0.04 0.04" />
+                
+                <body name="robot0:ur5e:wrist_3_link" pos="0 0 0.1" childclass="ur5e:manipulation">
+                  <inertial mass="0.1889" pos="0 0.0771683 0" quat="1 0 0 1" diaginertia="0.000132134 9.90863e-05 9.90863e-05" />
+                  <joint name="robot0:ur5e:wrist_3_joint" class="ur5e:size1" />
+                  <geom material="ur5e:linkgray" mesh="ur5e:wrist3" class="ur5e:visual" />
+                  <geom class="ur5e:eef_collision" pos="0 0.08 0" quat="1 1 0 0" size="0.04 0.02" />
+
+                  <body name="realsense_camera" pos="0 0.12 0.08" euler="0 0 0">
+                    <!-- Camera body with  dimensions (90mm wide x 25mm tall x 25mm deep) -->
+                    <geom name="camera_body" type="box" size="0.045 0.0125 0.0125" rgba="0.15 0.15 0.15 1" material="camera_mat" />
+                    
+                    <!-- RGB camera with 69° × 42° FOV (H×V) -->
+                    <camera name="realsense_rgb" pos="0 0.015 0" euler="1.57 0 0" fovy="42" />
+
+                    <!-- Depth camera with 87° × 58° FOV (H×V) -->
+                    <camera name="realsense_depth" pos="0.025 0.015 0" euler="1.57 0 0" fovy="58" />
+                  </body>
+
+                  <!-- Scene camera moved outside the robot - for human visualization -->
+                  <camera name="scene_camera" pos="2.0 2.0 1.5" xyaxes="-1 0 0 0 -0.7 0.7" fovy="45" />
+
+                  <!-- End effector site - positioned for optimal grasp point (moved in front of gripper) -->
+                  <site name="robot0:eef_site" pos="0 0.16 0" quat="-1 1 0 0" />
+                  <geom size="0.008" rgba="1 0 0 0.7" pos="0 0.16 0" quat="-1 1 0 0" contype="0" conaffinity="0" group="2" />
+                  
+                  <!-- 2f85 Gripper -->
+                  <body name="robot0:2f85:base_mount" pos="0 0.1 0" quat="-1 1 0 0" childclass="2f85">
+                    <geom class="2f85:visual" mesh="2f85:base_mount" material="2f85:black" />
+                    <geom class="2f85:collision" mesh="2f85:base_mount" />
+                    
+                    <body name="robot0:2f85:base" pos="0 0 0.0038" quat="1 0 0 -1">
+                      <inertial mass="0.777441" pos="0 -2.70394e-05 0.0354675" quat="1 -0.00152849 0 0" diaginertia="0.000260285 0.000225381 0.000152708" />
+                      <geom class="2f85:visual" mesh="2f85:base" material="2f85:black" />
+                      <geom class="2f85:collision" mesh="2f85:base" />
+                      
+                      <!-- Pinch site for grasp detection -->
+                      <site name="robot0:2f85:pinch" pos="0 0 0.145" type="sphere" group="5" rgba="0.9 0.9 0.9 0.7" size="0.003" />
+                      
+                      <!-- Right-hand side gripper -->
+                      <body name="robot0:2f85:right_driver" pos="0 0.0306011 0.054904">
+                        <inertial mass="0.00899563" pos="2.96931e-12 0.0177547 0.00107314" quat="0.681301 0.732003 0 0" diaginertia="1.72352e-06 1.60906e-06 3.22006e-07" />
+                        <joint name="robot0:2f85:right_driver_joint" class="2f85:driver" />
+                        <geom class="2f85:visual" mesh="2f85:driver" material="2f85:gray" />
+                        <geom class="2f85:collision" mesh="2f85:driver" />
+                        
+                        <body name="robot0:2f85:right_coupler" pos="0 0.0315 -0.0041">
+                          <inertial mass="0.0140974" pos="0 0.00301209 0.0232175" quat="0.705636 -0.0455904 0.0455904 0.705636" diaginertia="4.16206e-06 3.52216e-06 8.88131e-07" />
+                          <joint name="robot0:2f85:right_coupler_joint" class="2f85:coupler" />
+                          <geom class="2f85:visual" mesh="2f85:coupler" material="2f85:black" />
+                          <geom class="2f85:collision" mesh="2f85:coupler" />
+                        </body>
+                      </body>
+                      
+                      <body name="robot0:2f85:right_spring_link" pos="0 0.0132 0.0609">
+                        <inertial mass="0.0221642" pos="-8.65005e-09 0.0181624 0.0212658" quat="0.663403 -0.244737 0.244737 0.663403" diaginertia="8.96853e-06 6.71733e-06 2.63931e-06" />
+                        <joint name="robot0:2f85:right_spring_link_joint" class="2f85:spring_link" />
+                        <geom class="2f85:visual" mesh="2f85:spring_link" material="2f85:black" />
+                        <geom class="2f85:collision" mesh="2f85:spring_link" />
+                        
+                        <body name="robot0:2f85:right_follower" pos="0 0.055 0.0375">
+                          <inertial mass="0.0125222" pos="0 -0.011046 0.0124786" quat="1 0.1664 0 0" diaginertia="2.67415e-06 2.4559e-06 6.02031e-07" />
+                          <joint name="robot0:2f85:right_follower_joint" class="2f85:follower" />
+                          <geom class="2f85:visual" mesh="2f85:follower" material="2f85:black" />
+                          <geom class="2f85:collision" mesh="2f85:follower" />
+                          
+                          <body name="robot0:2f85:right_pad" pos="0 -0.0189 0.01352">
+                            <geom class="2f85:pad_box1" name="robot0:2f85:right_pad1" />
+                            <geom class="2f85:pad_box2" name="robot0:2f85:right_pad2" />
+                            <inertial mass="0.0035" pos="0 -0.0025 0.0185" quat="0.707107 0 0 0.707107" diaginertia="4.73958e-07 3.64583e-07 1.23958e-07" />
+                            <geom class="2f85:visual" mesh="2f85:pad" />
+                            
+                            <body name="robot0:2f85:right_silicone_pad">
+                              <geom class="2f85:visual" mesh="2f85:silicone_pad" material="2f85:black" />
+                            </body>
+                          </body>
+                        </body>
+                      </body>
+                      
+                      <!-- Left-hand side gripper (mirrored) -->
+                      <body name="robot0:2f85:left_driver" pos="0 -0.0306011 0.054904" quat="0 0 0 1">
+                        <inertial mass="0.00899563" pos="0 0.0177547 0.00107314" quat="0.681301 0.732003 0 0" diaginertia="1.72352e-06 1.60906e-06 3.22006e-07" />
+                        <joint name="robot0:2f85:left_driver_joint" class="2f85:driver" />
+                        <geom class="2f85:visual" mesh="2f85:driver" material="2f85:gray" />
+                        <geom class="2f85:collision" mesh="2f85:driver" />
+                        
+                        <body name="robot0:2f85:left_coupler" pos="0 0.0315 -0.0041">
+                          <inertial mass="0.0140974" pos="0 0.00301209 0.0232175" quat="0.705636 -0.0455904 0.0455904 0.705636" diaginertia="4.16206e-06 3.52216e-06 8.88131e-07" />
+                          <joint name="robot0:2f85:left_coupler_joint" class="2f85:coupler" />
+                          <geom class="2f85:visual" mesh="2f85:coupler" material="2f85:black" />
+                          <geom class="2f85:collision" mesh="2f85:coupler" />
+                        </body>
+                      </body>
+                      
+                      <body name="robot0:2f85:left_spring_link" pos="0 -0.0132 0.0609" quat="0 0 0 1">
+                        <inertial mass="0.0221642" pos="-8.65005e-09 0.0181624 0.0212658" quat="0.663403 -0.244737 0.244737 0.663403" diaginertia="8.96853e-06 6.71733e-06 2.63931e-06" />
+                        <joint name="robot0:2f85:left_spring_link_joint" class="2f85:spring_link" />
+                        <geom class="2f85:visual" mesh="2f85:spring_link" material="2f85:black" />
+                        <geom class="2f85:collision" mesh="2f85:spring_link" />
+                        
+                        <body name="robot0:2f85:left_follower" pos="0 0.055 0.0375">
+                          <inertial mass="0.0125222" pos="0 -0.011046 0.0124786" quat="1 0.1664 0 0" diaginertia="2.67415e-06 2.4559e-06 6.02031e-07" />
+                          <joint name="robot0:2f85:left_follower_joint" class="2f85:follower" />
+                          <geom class="2f85:visual" mesh="2f85:follower" material="2f85:black" />
+                          <geom class="2f85:collision" mesh="2f85:follower" />
+                          
+                          <body name="robot0:2f85:left_pad" pos="0 -0.0189 0.01352">
+                            <geom class="2f85:pad_box1" name="robot0:2f85:left_pad1" />
+                            <geom class="2f85:pad_box2" name="robot0:2f85:left_pad2" />
+                            <inertial mass="0.0035" pos="0 -0.0025 0.0185" quat="1 0 0 1" diaginertia="4.73958e-07 3.64583e-07 1.23958e-07" />
+                            <geom class="2f85:visual" mesh="2f85:pad" />
+                            
+                            <body name="robot0:2f85:left_silicone_pad">
+                              <geom class="2f85:visual" mesh="2f85:silicone_pad" material="2f85:black" />
+                            </body>
+                          </body>
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <!-- Contact exclusions for gripper -->
+  <contact>
+    <exclude body1="robot0:2f85:base" body2="robot0:2f85:left_driver" />
+    <exclude body1="robot0:2f85:base" body2="robot0:2f85:right_driver" />
+    <exclude body1="robot0:2f85:base" body2="robot0:2f85:left_spring_link" />
+    <exclude body1="robot0:2f85:base" body2="robot0:2f85:right_spring_link" />
+    <exclude body1="robot0:2f85:right_coupler" body2="robot0:2f85:right_follower" />
+    <exclude body1="robot0:2f85:left_coupler" body2="robot0:2f85:left_follower" />
+  </contact>
+
+  <!-- Gripper coupling -->
+  <tendon>
+    <fixed name="robot0:2f85:split">
+      <joint joint="robot0:2f85:right_driver_joint" coef="0.5" />
+      <joint joint="robot0:2f85:left_driver_joint" coef="0.5" />
+    </fixed>
+  </tendon>
+
+  <!-- Gripper constraints -->
+  <equality>
+    <connect anchor="0 0 0" body1="robot0:2f85:right_follower" body2="robot0:2f85:right_coupler" solimp="0.95 0.99 0.001" solref="0.005 1" />
+    <connect anchor="0 0 0" body1="robot0:2f85:left_follower" body2="robot0:2f85:left_coupler" solimp="0.95 0.99 0.001" solref="0.005 1" />
+    <joint joint1="robot0:2f85:right_driver_joint" joint2="robot0:2f85:left_driver_joint" polycoef="0 1 0 0 0" solimp="0.95 0.99 0.001" solref="0.005 1" />
+  </equality>
+
+  <actuator>
+    <motor name="robot0:ur5e:shoulder_pan" joint="robot0:ur5e:shoulder_pan_joint" 
+           gear="100" ctrllimited="true" ctrlrange="-3.14159 3.14159"/>
+    <motor name="robot0:ur5e:shoulder_lift" joint="robot0:ur5e:shoulder_lift_joint" 
+           gear="100" ctrllimited="true" ctrlrange="-3.14159 3.14159"/>
+    <motor name="robot0:ur5e:elbow" joint="robot0:ur5e:elbow_joint" 
+           gear="100" ctrllimited="true" ctrlrange="-3.14159 3.14159"/>
+    <motor name="robot0:ur5e:wrist_1" joint="robot0:ur5e:wrist_1_joint" 
+           gear="100" ctrllimited="true" ctrlrange="-3.14159 3.14159"/>
+    <motor name="robot0:ur5e:wrist_2" joint="robot0:ur5e:wrist_2_joint" 
+           gear="100" ctrllimited="true" ctrlrange="-3.14159 3.14159"/>
+    <motor name="robot0:ur5e:wrist_3" joint="robot0:ur5e:wrist_3_joint" 
+           gear="100" ctrllimited="true" ctrlrange="-3.14159 3.14159"/>
+    
+    <general class="2f85" name="robot0:2f85:fingers_actuator" tendon="robot0:2f85:split" 
+             forcerange="-5 5" ctrlrange="0 255" gainprm="0.3137255 0 0" biasprm="0 -50 -5" />
+  </actuator>
+
+  <!-- sensors for better feedback -->
+  <sensor>
+    <!-- Force/torque at end effector -->
+    <force name="robot0:eef_force" site="robot0:eef_site" cutoff="50" />
+    <torque name="robot0:eef_torque" site="robot0:eef_site" cutoff="10" />
+    
+    <!-- Joint position sensors -->
+    <jointpos name="robot0:joint_pos_0" joint="robot0:ur5e:shoulder_pan_joint" />
+    <jointpos name="robot0:joint_pos_1" joint="robot0:ur5e:shoulder_lift_joint" />
+    <jointpos name="robot0:joint_pos_2" joint="robot0:ur5e:elbow_joint" />
+    <jointpos name="robot0:joint_pos_3" joint="robot0:ur5e:wrist_1_joint" />
+    <jointpos name="robot0:joint_pos_4" joint="robot0:ur5e:wrist_2_joint" />
+    <jointpos name="robot0:joint_pos_5" joint="robot0:ur5e:wrist_3_joint" />
+    
+    <!-- Joint velocity sensors -->
+    <jointvel name="robot0:joint_vel_0" joint="robot0:ur5e:shoulder_pan_joint" />
+    <jointvel name="robot0:joint_vel_1" joint="robot0:ur5e:shoulder_lift_joint" />
+    <jointvel name="robot0:joint_vel_2" joint="robot0:ur5e:elbow_joint" />
+    <jointvel name="robot0:joint_vel_3" joint="robot0:ur5e:wrist_1_joint" />
+    <jointvel name="robot0:joint_vel_4" joint="robot0:ur5e:wrist_2_joint" />
+    <jointvel name="robot0:joint_vel_5" joint="robot0:ur5e:wrist_3_joint" />
+    
+    <!-- Gripper sensors -->
+    <jointpos name="robot0:gripper_pos" joint="robot0:2f85:right_driver_joint" />
+    <jointvel name="robot0:gripper_vel" joint="robot0:2f85:right_driver_joint" />
+  </sensor>
+
+</mujoco>
