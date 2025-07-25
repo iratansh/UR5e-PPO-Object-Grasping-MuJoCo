@@ -4,6 +4,7 @@ Integrated Training Script for UR5e Pick-Place
 
 import os
 import sys
+import platform
 import numpy as np
 import torch
 from datetime import datetime
@@ -11,6 +12,34 @@ from pathlib import Path
 import yaml
 from typing import Dict, Optional
 import time
+
+# Setup Ubuntu MuJoCo compatibility
+def setup_ubuntu_mujoco():
+    """Setup MuJoCo for Ubuntu headless training"""
+    if platform.system() == "Linux":
+        print("🐧 Configuring MuJoCo for Ubuntu...")
+        
+        # Force EGL rendering for headless operation
+        os.environ["MUJOCO_GL"] = "egl"
+        
+        # Force headless mode
+        os.environ["MUJOCO_HEADLESS"] = "1"
+        
+        # Disable X11 dependencies
+        if "DISPLAY" in os.environ:
+            del os.environ["DISPLAY"]
+        
+        # Additional OpenGL stability
+        os.environ["MESA_GL_VERSION_OVERRIDE"] = "3.3"
+        os.environ["MESA_GLSL_VERSION_OVERRIDE"] = "330"
+        os.environ["MUJOCO_GL_DISABLE_EXTENSIONS"] = "1"
+        
+        print("✅ Ubuntu MuJoCo environment configured")
+    elif platform.system() == "Darwin":
+        print("🍎 macOS detected - using Apple Silicon optimizations")
+
+# Apply Ubuntu fixes immediately
+setup_ubuntu_mujoco()
 
 # Add homestri to path
 sys.path.insert(0, str(Path(__file__).parent.parent))

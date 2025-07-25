@@ -4,7 +4,7 @@ channels:
   - pytorch
   - nvidia
 dependencies:
-  - python=3.9.23
+  - python=3.9
   - pip
   - numpy
   - scipy
@@ -17,11 +17,11 @@ dependencies:
   - ffmpeg
   - git
   
-  # CUDA and PyTorch (CUDA 11.8 or 12.1 compatible)
+  # CUDA and PyTorch (CUDA 12.1 compatible with your RTX 4060)
   - pytorch::pytorch>=2.0.0
   - pytorch::torchvision
   - pytorch::torchaudio
-  - pytorch::pytorch-cuda=11.8  # or 12.1 depending on your CUDA version
+  - pytorch::pytorch-cuda=12.1
   
   # MuJoCo and robotics
   - conda-forge::mujoco>=2.3.0
@@ -43,15 +43,9 @@ dependencies:
     - tensorboard
     - wandb
     
-    # Robotics specific
-    - robotics-toolbox-python
-    - spatialmath-python
-    - swift-sim
-    
     # Additional utilities
     - imageio-ffmpeg
     - moviepy
-    - pybullet  # For additional physics simulation if needed
     
     # Install homestri-ur5e-rl in development mode
     - -e .

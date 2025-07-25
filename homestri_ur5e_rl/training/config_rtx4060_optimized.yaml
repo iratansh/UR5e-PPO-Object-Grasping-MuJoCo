@@ -3,40 +3,41 @@
 # Target: Multi-day stable training with 70%+ real-world success rate
 
 environment:
-  n_envs: 2 # Conservative start, change later
-  
-  camera_resolution: 64  # Proven stable from M2 validation, also change later
-  
-  frame_skip: 5  
-  xml_file: "custom_scene.xml"  
-  control_mode: "joint"  
+  n_envs: 4 # Increased for better throughput while maintaining stability
+
+  camera_resolution: 64  # Proven stable from M2 validation, also change later (old 64)
+
+  frame_skip: 5
+  xml_file: "custom_scene.xml"
+  control_mode: "joint"
   use_stuck_detection: true
   
   use_domain_randomization: false 
   
   initial_curriculum_level: 0.1  
-  render_mode: null
-
+  render_mode: null  # Completely disable rendering
+  headless: true  
 training:
   total_timesteps: 27_000_000
-  learning_rate: 0.0003
+  learning_rate: 0.00005  # EMERGENCY: Halve learning rate (was 0.0001)
+  detailed_log_freq: 2048
 
   n_steps: 512
 
   batch_size: 32
   gradient_accumulation_steps: 4  
   
-  n_epochs: 10  
+  n_epochs: 5  # REDUCED: Less aggressive updates (was 10)
   gamma: 0.99  
   gae_lambda: 0.95  
-  clip_range: 0.2  
+  clip_range: 0.05  # REDUCED: Much tighter clipping (was 0.1)
   clip_range_vf: null
   normalize_advantage: true
-  ent_coef: 0.01  
-  vf_coef: 0.5
-  max_grad_norm: 0.5 
+  ent_coef: 0.0005  # REDUCED: Less exploration (was 0.001)
+  vf_coef: 1.0  # INCREASED: Help value function recover (was 0.5)
+  max_grad_norm: 0.05  # REDUCED: Much stronger gradient clipping (was 0.1)
   
-  target_kl: 0.03  
+  target_kl: 0.01  # REDUCED: Tighter KL constraint (was 0.03)  
   
   use_mixed_precision: true
   mixed_precision_dtype: "bfloat16"  
@@ -69,26 +70,31 @@ curriculum:
     - name: "approach_learning"
       description: "Learn safe object approach"
       timesteps: 5_000_000  
+      success_threshold: 0.1  # 10% - Critical missing threshold!
       domain_randomization_level: 0.0
       
     - name: "contact_refinement" 
       description: "Refine gripper positioning and contact"
       timesteps: 4_000_000
+      success_threshold: 0.3  # 30% - Critical missing threshold!
       domain_randomization_level: 0.2  
       
     - name: "grasping"
       description: "Master object grasping and lifting"
       timesteps: 8_000_000
+      success_threshold: 0.5  # 50% - Critical missing threshold!
       domain_randomization_level: 0.4
       
     - name: "manipulation"
       description: "Complete pick and place tasks"
       timesteps: 6_000_000
+      success_threshold: 0.7  # 70% - Critical missing threshold!
       domain_randomization_level: 0.7
       
     - name: "mastery"
       description: "Achieve robust, collision-free manipulation"
       timesteps: 4_000_000
+      success_threshold: 0.85  # 85% - Critical missing threshold!
       domain_randomization_level: 1.0 
 
 domain_randomization:
@@ -117,22 +123,25 @@ memory_optimization:
   buffer_device: "cpu" 
   enable_memory_profiler: true
   auto_restart_on_oom: true 
-  memory_limit_gb: 6.0  
+  memory_limit_gb: 7.0  # INCREASED: 4 envs need more GPU memory (was 6.0)  
 
 vectorization:
   vec_env_type: "SubprocVecEnv"  
   start_method: "forkserver"  
   cpu_affinity: true
-  worker_cpu_cores: [0, 1] 
+  worker_cpu_cores: [0, 1, 2, 3]  # UPDATED: 4 cores for 4 environments 
 
 monitoring:
   track_explained_variance: true
   track_kl_divergence: true
   gpu_utilization_log: true
   
+  # ENHANCED: Early warning system for policy collapse
   alert_thresholds:
-    kl_divergence_max: 0.05
-    explained_variance_min: 0.5
+    kl_divergence_max: 0.02  # REDUCED: Stricter KL monitoring (was 0.05)
+    explained_variance_min: 0.8  # INCREASED: Higher quality threshold (was 0.5)
+    action_diversity_max: 2.0  # NEW: Detect action explosion early
+    policy_std_max: 5.0  # NEW: Prevent policy standard deviation explosion
     gpu_memory_percent_max: 75 
 
 checkpointing:
@@ -143,22 +152,22 @@ checkpointing:
   verify_checkpoint_integrity: true
 
 expected_performance:
-  steps_per_second: 80-120  
-  episodes_per_hour: 160-240  
+  steps_per_second: 160-240  # UPDATED: Based on 4 envs performance
+  episodes_per_hour: 320-480  # UPDATED: Scaled for 4 environments
   
-  # Timeline estimates
-  approach_learning: "15-20 hours"  # 5M steps
-  contact_refinement: "25-30 hours"  # 9M steps total
-  grasping: "45-55 hours"  # 17M steps total  
-  manipulation: "65-75 hours"  # 23M steps total
-  mastery: "85-95 hours"  # 27M steps total
+  # Updated timeline estimates for 4 environments
+  approach_learning: "7-10 hours"  # 5M steps (was 10-14 for 3 envs)
+  contact_refinement: "13-17 hours"  # 9M steps total (was 17-23)
+  grasping: "23-28 hours"  # 17M steps total (was 30-37)
+  manipulation: "32-38 hours"  # 23M steps total (was 43-50)
+  mastery: "43-47 hours"  # 27M steps total (was 57-63)
   
-  gpu_memory: "5.5-6.0GB"  
-  system_ram: "7-9GB" 
+  gpu_memory: "6.5-7.0GB"  # UPDATED: 4 envs use more memory
+  system_ram: "9-11GB"  # UPDATED: 4 envs use more RAM 
 
 hardware:
-  gpu_memory_fraction: 0.75 
-  cpu_workers: 2  
+  gpu_memory_fraction: 0.85  # INCREASED: 4 envs need more GPU memory (was 0.75)
+  cpu_workers: 4  # UPDATED: Match number of environments (was 2)
   prefetch_factor: 2
 
 validation_targets:
@@ -178,3 +187,38 @@ design_philosophy:
   progressive_scaling: "Start conservative, expand capabilities"
   multi_day_resilience: "Prevent training collapse"
   sim_to_real_focus: "Balanced approach for real robot transfer"
+
+camera:
+  realsense_rgb_fov_h: 69.0
+  realsense_rgb_fov_v: 42.0
+  realsense_depth_fov_h: 87.0
+  realsense_depth_fov_v: 58.0
+  min_depth: 0.28
+  max_depth: 3.0
+  
+safety:
+  enable_physics_checks: true
+  enable_workspace_bounds: true
+  enable_joint_limits: true
+  enable_velocity_limits: true
+  terminate_on_physics_error: true
+
+action_limits:
+  max_joint_velocity: 0.3
+  max_action_magnitude: 0.1
+  action_scale: 0.02
+  action_smoothing_factor: 0.3
+  max_consecutive_physics_errors: 3
+
+physics:
+  timestep: 0.002
+  iterations: 50
+  solver: "Newton"
+  jacobian: "sparse"
+  tolerance: 1e-10
+  joint_damping: 1.0
+  joint_armature: 0.01
+  joint_frictionloss: 0.2
+  contact_solimp: [0.9, 0.9, 0.01]
+  contact_solref: [0.005, 1]
+  contact_margin: 0.001

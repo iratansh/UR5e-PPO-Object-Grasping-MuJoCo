@@ -404,26 +404,31 @@ class MujocoEnv(BaseMujocoEnv):
             camera_name,
         )
 
-        try:
-            from homestri_ur5e_rl.envs.mujoco.mujoco_rendering import MujocoRenderer
-            # Custom renderer doesn't support max_geom parameter
-            self.mujoco_renderer = MujocoRenderer(
-                self.model,
-                self.data,
-                default_camera_config,
-                **visual_options,
-            )
-        except ImportError:
-            # Fallback for environments without custom renderer
-            print(" Custom MujocoRenderer not found, using basic rendering")
-            from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
-            self.mujoco_renderer = MujocoRenderer(
-                self.model,
-                self.data,
-                default_camera_config,
-                max_geom=max_geom,
-                **visual_options,
-            )
+        # Only initialize renderer if not in headless mode
+        self.mujoco_renderer = None
+        if not (os.getenv("MUJOCO_HEADLESS") == "1" or kwargs.get("headless", False)):
+            try:
+                from homestri_ur5e_rl.envs.mujoco.mujoco_rendering import MujocoRenderer
+                # Custom renderer doesn't support max_geom parameter
+                self.mujoco_renderer = MujocoRenderer(
+                    self.model,
+                    self.data,
+                    default_camera_config,
+                    **visual_options,
+                )
+            except ImportError:
+                # Fallback for environments without custom renderer
+                print(" Custom MujocoRenderer not found, using basic rendering")
+                from gymnasium.envs.mujoco.mujoco_rendering import MujocoRenderer
+                self.mujoco_renderer = MujocoRenderer(
+                    self.model,
+                    self.data,
+                    default_camera_config,
+                    max_geom=max_geom,
+                    **visual_options,
+                )
+        else:
+            print(" Headless mode: Skipping renderer initialization")
 
     def _initialize_simulation(
         self,
@@ -458,6 +463,14 @@ class MujocoEnv(BaseMujocoEnv):
 
     def render(self):
         """FIXED Enhanced render method with camera support"""
+        if self.mujoco_renderer is None:
+            # Return dummy data for headless mode
+            if self.render_mode == "rgb_array":
+                return np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            elif self.render_mode == "depth_array":
+                return np.zeros((self.height, self.width), dtype=np.float32)
+            return None
+            
         return self.mujoco_renderer.render(
             self.render_mode, self.camera_id, self.camera_name, env=self
         )
