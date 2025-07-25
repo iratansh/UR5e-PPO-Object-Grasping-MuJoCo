@@ -18,8 +18,8 @@ class CurriculumManager:
         self.phases = {
             "approach_learning": {
                 "timesteps": 5_000_000,
-                "success_threshold": 0.1,  # 10% success to advance
-                "focus": "safe_approach_and_gripper_contact",
+                "success_threshold": 0.05,  # 5% success to advance
+                "focus": "contact_only",
                 "description": "Learn to approach object safely and make gentle gripper contact",
                 "collision_rewards": {
                     "gripper_object_contact": 0.5,      

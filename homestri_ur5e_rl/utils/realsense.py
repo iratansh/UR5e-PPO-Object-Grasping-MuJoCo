@@ -67,7 +67,7 @@ class RealSenseD435iSimulator:
         self._init_rendering()
         
     def _init_rendering(self):
-        """Initialize rendering components with error handling"""
+        """Initialize rendering components with error handling and a warm-up render."""
         try:
             self.scene = mujoco.MjvScene(self.model, maxgeom=1000)
             self.context = mujoco.MjrContext(self.model, mujoco.mjtFontScale.mjFONTSCALE_150)
@@ -85,7 +85,10 @@ class RealSenseD435iSimulator:
             self.depth_camera.fixedcamid = self.depth_camera_id
             
             self.option = mujoco.MjvOption()
-            # Disable unnecessary visual elements
+            # Explicitly enable all standard visual elements to combat EGL issues
+            for i in range(mujoco.mjtVisFlag.mjNVISFLAG):
+                self.option.flags[i] = True
+            self.option.flags[mujoco.mjtVisFlag.mjVIS_CONVEXHULL] = False # Usually off
             self.option.flags[mujoco.mjtVisFlag.mjVIS_ACTUATOR] = False
             self.option.flags[mujoco.mjtVisFlag.mjVIS_JOINT] = False
             
@@ -100,44 +103,57 @@ class RealSenseD435iSimulator:
             print(f" RealSense rendering initialized: {self.resolution}x{self.resolution}")
             print(f"   RGB FOV: {self.rgb_fov_horizontal}° × {self.rgb_fov_vertical}°")
             print(f"   Depth FOV: {self.depth_fov_horizontal}° × {self.depth_fov_vertical}°")
-            
+
         except Exception as e:
             print(f" Rendering initialization failed: {e}")
             self.scene = None
             self.context = None
+    
+    def _reinit_rendering(self):
+        """Reinitialize rendering components if an issue is detected."""
+        try:
+            if hasattr(self, 'context') and self.context is not None:
+                self.context = None
+            
+            self.context = mujoco.MjrContext(self.model, mujoco.mjtFontScale.mjFONTSCALE_150)
+            self.viewport = mujoco.MjrRect(0, 0, self.resolution, self.resolution)
+            
+            print("✅ Rendering context reinitialized successfully.")
+        except Exception as e:
+            print(f"❌ Failed to reinitialize rendering: {e}")
             
     def render_rgbd(self) -> np.ndarray:
         """
-        Render RGB-D data with accurate FOV for each camera
+        Render RGB-D data. Includes a proactive check to reinitialize context if the RGB buffer is blank.
         Returns: Flattened RGBD array (resolution^2 * 4)
         """
         if self.rgb_camera_id < 0 or self.scene is None or self.context is None:
             return np.zeros(self.resolution * self.resolution * 4, dtype=np.float32)
-        
+    
         try:
-            # Render RGB with wider FOV
-            mujoco.mjv_updateScene(
-                self.model, self.data, self.option, None, self.rgb_camera, 
-                mujoco.mjtCatBit.mjCAT_ALL, self.scene
-            )
-            
+            # Set buffer to offscreen and render the scene once
             mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_OFFSCREEN, self.context)
+            mujoco.mjv_updateScene(self.model, self.data, self.option, None, self.rgb_camera, mujoco.mjtCatBit.mjCAT_ALL, self.scene)
             mujoco.mjr_render(self.viewport, self.scene, self.context)
-            mujoco.mjr_readPixels(self.rgb_buffer, None, self.viewport, self.context)
+            
+            # Read both RGB and Depth buffers from the single render pass
+            mujoco.mjr_readPixels(self.rgb_buffer, self.depth_buffer, self.viewport, self.context)
+
+            # Proactive check for blank RGB buffer
+            if np.max(self.rgb_buffer) == 0:
+                warnings.warn("Blank RGB buffer detected. Attempting to reinitialize and retry render.")
+                self._reinit_rendering()
+                
+                # Retry the render one time after re-initialization
+                mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_OFFSCREEN, self.context)
+                mujoco.mjv_updateScene(self.model, self.data, self.option, None, self.rgb_camera, mujoco.mjtCatBit.mjCAT_ALL, self.scene)
+                mujoco.mjr_render(self.viewport, self.scene, self.context)
+                mujoco.mjr_readPixels(self.rgb_buffer, self.depth_buffer, self.viewport, self.context)
             
             # Process RGB
             rgb_processed = np.flipud(self.rgb_buffer.copy()).astype(np.float32) / 255.0
             
-            # Render depth with narrower FOV 
-            if self.depth_camera_id != self.rgb_camera_id:
-                mujoco.mjv_updateScene(
-                    self.model, self.data, self.option, None, self.depth_camera, 
-                    mujoco.mjtCatBit.mjCAT_ALL, self.scene
-                )
-                mujoco.mjr_render(self.viewport, self.scene, self.context)
-            
-            # Read depth
-            mujoco.mjr_readPixels(None, self.depth_buffer, self.viewport, self.context)
+            # Process Depth (already read from the buffer)
             depth_processed = self._process_depth(np.flipud(self.depth_buffer.copy()))
             
             # Combine RGBD
@@ -154,27 +170,18 @@ class RealSenseD435iSimulator:
     def _process_depth(self, raw_depth: np.ndarray) -> np.ndarray:
         """Convert MuJoCo depth buffer to realistic depth values"""
         try:
-            # Get camera parameters
             extent = self.model.stat.extent
             near = self.model.vis.map.znear * extent
             far = self.model.vis.map.zfar * extent
             
-            # Convert from normalized depth to meters
-            # MuJoCo uses inverse depth in the depth buffer
             depth_meters = np.zeros_like(raw_depth)
             valid_mask = (raw_depth > 0) & (raw_depth < 1) & np.isfinite(raw_depth)
             
             if np.any(valid_mask):
-                # Linearize depth
                 depth_meters[valid_mask] = near * far / (far - raw_depth[valid_mask] * (far - near))
             
-            # Add realistic noise
             depth_meters = self._add_depth_noise(depth_meters)
-            
-            # Apply range limits
             depth_meters = self._apply_range_limits(depth_meters)
-            
-            # Normalize for neural network
             return self._normalize_depth(depth_meters)
             
         except Exception as e:
@@ -189,12 +196,10 @@ class RealSenseD435iSimulator:
         
         depth_noisy = depth.copy()
         
-        # Distance-dependent noise
         noise_std = depth[valid_mask] * self.depth_noise_percent
         noise = np.random.normal(0, noise_std)
         depth_noisy[valid_mask] += noise
         
-        # Occasional dropouts
         if np.random.random() < 0.01:
             dropout_mask = np.random.random(depth.shape) < 0.001
             depth_noisy[dropout_mask] = 0

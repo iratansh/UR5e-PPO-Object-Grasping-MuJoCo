@@ -485,6 +485,12 @@ class UR5ePickPlaceEnvEnhanced(MujocoEnv, StuckDetectionMixin):
                 reward_components['approach'] = approach_bonus
                 total_reward += approach_bonus
             
+            if dist_to_obj < 0.03 and not hasattr(self, '_contact_achieved'):
+                self._contact_achieved = True
+                # Force curriculum progression check
+                if self.curriculum_manager:
+                    self.curriculum_manager.update(1.0)  # Perfect success for contact
+            
             # Contact bonus - when very close
             if dist_to_obj < 0.05:
                 contact_bonus = self.reward_config['contact_bonus']

@@ -216,7 +216,7 @@ class IntegratedTrainer:
         tensorboard_log = str(self.exp_dir / "tensorboard")
         Path(tensorboard_log).mkdir(parents=True, exist_ok=True)
         
-        # FIXED: Policy kwargs with conservative settings
+        # Policy kwargs with conservative settings
         policy_kwargs = dict(
             features_extractor_class=SimToRealCNNExtractor,
             features_extractor_kwargs=dict(
@@ -232,7 +232,7 @@ class IntegratedTrainer:
             log_std_init=0.0,  # Initial policy variance
         )
         
-        # FIXED: Conservative PPO settings
+        # Conservative PPO settings
         self.model = PPO(
             "MlpPolicy",
             self.train_env,
@@ -465,8 +465,7 @@ class IntegratedTrainer:
                         camera_sees = unwrapped_env._check_camera_sees_object() if hasattr(unwrapped_env, '_check_camera_sees_object') else "Unknown"
                         
                         # Analyze CNN input - extract camera portion of observation
-                        camera_obs = self._extract_camera_observation(obs)
-                        cnn_analysis = self._analyze_cnn_perception(camera_obs)
+                        cnn_analysis = self._analyze_visual_perception(obs)
                         
                         print(f"\n🔍 Object Perception Log - Episode {episode}, Step {step}")
                         print(f"   📦 Spawned Object:")
@@ -475,8 +474,7 @@ class IntegratedTrainer:
                         print(f"       Size: {obj_size}")
                         print(f"       Camera Sees: {camera_sees}")
                         print(f"   👁 CNN Perception:")
-                        print(f"       Input Shape: {camera_obs.shape if camera_obs is not None else 'None'}")
-                        print(f"       Pixel Stats: {cnn_analysis}")
+                        print(f"{cnn_analysis}")
                         
         except Exception as e:
             print(f"   ⚠️ Object perception logging failed: {e}")
@@ -499,59 +497,58 @@ class IntegratedTrainer:
         except:
             return "size_error"
     
-    def _extract_camera_observation(self, obs):
-        """Extract camera portion from full observation"""
+    def _analyze_visual_perception(self, obs: np.ndarray) -> str:
+        """
+        Analyzes the visual part of the observation vector (RGB and Depth).
+        This logic is based on the working test script to ensure consistency.
+        """
         try:
-            # Observation structure: [robot_state, camera_image]
-            # Camera is typically the last part and should be camera_resolution x camera_resolution x 3
-            camera_res = self.config["environment"]["camera_resolution"]
-            expected_camera_pixels = camera_res * camera_res * 3
+            cam_res = self.config["environment"]["camera_resolution"]
             
-            if len(obs.shape) == 1:  # Flattened observation
-                if len(obs) >= expected_camera_pixels:
-                    # Extract last camera_pixels elements
-                    camera_flat = obs[-expected_camera_pixels:]
-                    camera_obs = camera_flat.reshape(camera_res, camera_res, 3)
-                    return camera_obs
-                    
-            return None
-        except:
-            return None
-    
-    def _analyze_cnn_perception(self, camera_obs):
-        """Analyze what the CNN might be seeing"""
-        if camera_obs is None:
-            return "No camera data"
+            # The observation vector contains kinematic data followed by camera data.
+            # Based on the env and working test script, the camera data starts at index 56.
+            # Total obs length = 55 (kinematics) + (64*64*4) (camera) + 1 (visibility) = 16440
+            # Camera data length is 16384 (for 64x64 res)
             
-        try:
-            # Basic image statistics
-            mean_intensity = np.mean(camera_obs)
-            std_intensity = np.std(camera_obs)
-            min_val = np.min(camera_obs)
-            max_val = np.max(camera_obs)
+            if len(obs) < 56 + (cam_res * cam_res * 4):
+                return "   ⚠️ Observation too short for camera analysis."
             
-            # Check for significant visual features
-            if std_intensity < 0.01:
-                visual_content = "Uniform/blank image"
-            elif std_intensity > 0.2:
-                visual_content = "High contrast/detailed"
-            else:
-                visual_content = "Some visual features"
+            # Define indices for RGB and Depth data within the observation vector
+            # These are based on the structure defined in UR5ePickPlaceEnvEnhanced and test scripts
+            rgb_start_idx = 55  # Kinematic data is 55 elements (0-54)
+            rgb_end_idx = rgb_start_idx + (cam_res * cam_res * 3)
+            depth_start_idx = rgb_end_idx
+            
+            # Extract flattened RGB and Depth data
+            rgb_obs = obs[rgb_start_idx:rgb_end_idx]
+            depth_obs = obs[depth_start_idx:depth_start_idx + (cam_res * cam_res)]
+            
+            # Perform analysis on RGB data
+            rgb_mean = np.mean(rgb_obs)
+            rgb_std = np.std(rgb_obs)
+            rgb_min, rgb_max = np.min(rgb_obs), np.max(rgb_obs)
+            rgb_has_content = rgb_std > 0.01
+
+            # Perform analysis on Depth data
+            depth_mean = np.mean(depth_obs)
+            depth_std = np.std(depth_obs)
+            depth_min, depth_max = np.min(depth_obs), np.max(depth_obs)
+            depth_has_content = depth_std > 0.01
+            
+            analysis_str = (
+                f"      RGB Stats  : mean={rgb_mean:.3f}, std={rgb_std:.3f}, range=[{rgb_min:.3f}, {rgb_max:.3f}]\n"
+                f"      Depth Stats: mean={depth_mean:.3f}, std={depth_std:.3f}, range=[{depth_min:.3f}, {depth_max:.3f}]\n"
+                f"      Visual Content: RGB={'✅' if rgb_has_content else '❌'}, Depth={'✅' if depth_has_content else '❌'}"
+            )
+            
+            if not (rgb_has_content or depth_has_content):
+                analysis_str += "\n      ⚠️ WARNING: Low visual variation - CNN may not see object clearly!"
                 
-            # Color analysis
-            if len(camera_obs.shape) == 3 and camera_obs.shape[2] == 3:
-                r_mean = np.mean(camera_obs[:, :, 0])
-                g_mean = np.mean(camera_obs[:, :, 1])
-                b_mean = np.mean(camera_obs[:, :, 2])
-                dominant_color = ["Red", "Green", "Blue"][np.argmax([r_mean, g_mean, b_mean])]
-            else:
-                dominant_color = "Unknown"
-                
-            return f"Mean:{mean_intensity:.3f}, Std:{std_intensity:.3f}, Range:[{min_val:.2f},{max_val:.2f}], Content:{visual_content}, Dominant:{dominant_color}"
-            
+            return analysis_str
+
         except Exception as e:
-            return f"Analysis failed: {e}"
-    
+            return f"   ❌ Visual perception analysis failed: {e}"
+
     def _log_evaluation_perception(self):
         """Log object perception during evaluation phases"""
         try:
