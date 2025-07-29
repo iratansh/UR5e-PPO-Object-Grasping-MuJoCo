@@ -96,41 +96,69 @@ class CurriculumManager:
         self._apply_phase_settings()
         
     def update(self, success_rate: float, collision_info: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Update curriculum based on performance and collision data"""
+        """FIXED update that allows progression even with 0% task success"""
         self.success_history.append(success_rate)
         
         if collision_info:
             self.collision_history.append(collision_info)
         
-        # Need sufficient data
-        if len(self.success_history) < 20:  # More samples before deciding
-            return self._get_current_status()
-            
-        # Calculate recent performance
-        recent_success = np.mean(self.success_history[-20:])
-        recent_collisions = self._analyze_recent_collisions()
+        # Use larger window for more stable metrics
+        window_size = 50  # Reduced from 100 for faster adaptation
+        if len(self.success_history) >= window_size:
+            recent_success = np.mean(self.success_history[-window_size:])
+        else:
+            recent_success = np.mean(self.success_history) if self.success_history else 0.0
         
         current_phase_info = self.phases[self.current_phase]
         phase_complete = False
         
-        # Check advancement criteria
+        # Time-based check
+        time_in_phase = time.time() - self.phase_start_time
+        max_phase_time = 3600 * 6  # 6 hours max per phase (reduced from 12)
+        
+        # Primary advancement: success threshold
         if recent_success >= current_phase_info["success_threshold"]:
-            # Additional stability checks for early phases
-            if self.current_phase == "approach_learning":
-                # Must demonstrate stable approaching
-                stability_score = recent_collisions.get("stability_score", 0)
-                if stability_score >= 0.5:  # At least 50% stable episodes
-                    phase_complete = True
-                    
-            elif self.current_phase == "contact_refinement":
-                # Must have consistent gentle contacts
-                gentle_contact_rate = recent_collisions.get("gentle_contact_rate", 0)
-                if gentle_contact_rate >= 0.6:  # 60% gentle contacts
-                    phase_complete = True
-                    
-            else:
-                # Later phases use success rate primarily
+            phase_complete = True
+            print(f"✅ Phase complete via success: {recent_success:.1%} >= {current_phase_info['success_threshold']:.1%}")
+        
+        # CRITICAL FIX: Alternative advancement criteria for approach phase
+        elif self.current_phase == "approach_learning":
+            # Check for ANY progress indicators
+            recent_collisions = self._analyze_recent_collisions()
+            
+            # Multiple ways to advance from approach phase:
+            # 1. Any successful grasp attempts
+            if recent_collisions.get("successful_grasps", 0) > 0:
                 phase_complete = True
+                print(f"✅ Approach phase complete: successful grasps detected!")
+            
+            # 2. Consistent object contact (even without grasps)
+            elif recent_collisions.get("gentle_contact_rate", 0) > 0.2:  # 20% contact rate
+                phase_complete = True
+                print(f"✅ Approach phase complete: consistent contact achieved ({recent_collisions['gentle_contact_rate']:.1%})")
+            
+            # 3. Low but non-zero success
+            elif recent_success > 0.001:  # Even 0.1% is progress!
+                phase_complete = True
+                print(f"✅ Approach phase complete: minimal success detected ({recent_success:.2%})")
+            
+            # 4. Time-based forced progression
+            elif time_in_phase > max_phase_time:
+                phase_complete = True
+                print(f"⏰ Forcing approach phase completion after {time_in_phase/3600:.1f} hours")
+                print(f"   Recent metrics: success={recent_success:.2%}, contacts={recent_collisions.get('gentle_contact_rate', 0):.1%}")
+        
+        # For other phases, also check alternative metrics
+        elif self.current_phase == "contact_refinement":
+            recent_collisions = self._analyze_recent_collisions()
+            
+            # Alternative: consistent grasping attempts
+            if recent_collisions.get("successful_grasps", 0) > 2:  # A few grasps
+                phase_complete = True
+                print(f"✅ Contact phase complete: multiple grasps achieved")
+            elif time_in_phase > max_phase_time * 1.5:  # Give more time for contact
+                phase_complete = True
+                print(f"⏰ Forcing contact phase completion after {time_in_phase/3600:.1f} hours")
         
         # Advance phase if ready
         if phase_complete:
@@ -142,34 +170,56 @@ class CurriculumManager:
                 self.phase_start_time = time.time()
                 self._apply_phase_settings()
                 
+                # Keep recent history for continuity
+                if len(self.success_history) > 100:
+                    self.success_history = self.success_history[-50:]
+                if len(self.collision_history) > 100:
+                    self.collision_history = self.collision_history[-50:]
+                
                 print(f"\n🎓 CURRICULUM ADVANCEMENT:")
                 print(f"   From: {old_phase} → To: {self.current_phase}")
-                print(f"   Success Rate: {recent_success:.1%}")
-                print(f"   Focus: {self.phases[self.current_phase]['description']}")
+                print(f"   Phase Duration: {time_in_phase/3600:.1f} hours")
+                print(f"   Final Success Rate: {recent_success:.2%}")
+                print(f"   New Focus: {self.phases[self.current_phase]['description']}")
+                print(f"   New Threshold: {self.phases[self.current_phase]['success_threshold']:.1%}")
+                print("="*60)
                 
                 return {
                     "phase_changed": True,
                     "old_phase": old_phase,
                     "new_phase": self.current_phase,
                     "success_rate": recent_success,
-                    "collision_analysis": recent_collisions
+                    "phase_duration_hours": time_in_phase/3600
                 }
+        
+        # Update phase progress
+        if current_phase_info.get("timesteps"):
+            # Estimate progress based on time and expected duration
+            expected_hours = current_phase_info["timesteps"] / 100_000  # Rough estimate
+            self.phase_progress = min(1.0, time_in_phase / (expected_hours * 3600))
         
         return self._get_current_status()
     
     def _analyze_recent_collisions(self) -> Dict[str, float]:
-        """Analyze recent collision data for curriculum decisions"""
+        """Enhanced collision analysis for better progress detection"""
         if len(self.collision_history) < 10:
-            return {"stability_score": 0.0, "gentle_contact_rate": 0.0}
-            
-        recent_collisions = self.collision_history[-30:]  # Last 30 episodes
+            return {
+                "stability_score": 0.0, 
+                "gentle_contact_rate": 0.0,
+                "successful_grasps": 0,
+                "grasp_attempts": 0
+            }
+        
+        recent_collisions = self.collision_history[-50:]  # Look at more history
         
         analysis = {
             "stability_score": 0.0,
             "gentle_contact_rate": 0.0,
             "successful_grasps": 0,
             "physics_stable_episodes": 0,
-            "object_flung_episodes": 0
+            "object_flung_episodes": 0,
+            "grasp_attempts": 0,
+            "contact_episodes": 0
         }
         
         for collision_data in recent_collisions:
@@ -179,19 +229,24 @@ class CurriculumManager:
                     analysis["physics_stable_episodes"] += 1
                 else:
                     analysis["object_flung_episodes"] += 1
-                    
-                # Check for gentle approaches
-                if collision_data.get("gentle_approach", False):
+                
+                # Check for any object contact
+                if collision_data.get("made_contact", False) or collision_data.get("gentle_approach", False):
+                    analysis["contact_episodes"] += 1
                     analysis["gentle_contact_rate"] += 1
-                    
+                
+                # Count grasp attempts
+                if collision_data.get("grasp_attempted", False):
+                    analysis["grasp_attempts"] += 1
+                
                 # Count successful grasps
-                if collision_data.get("successful_grasp", False):
+                if collision_data.get("successful_grasp", False) or collision_data.get("object_grasped", False):
                     analysis["successful_grasps"] += 1
         
         # Calculate rates
-        episode_count = len(recent_collisions)
+        episode_count = max(len(recent_collisions), 1)
         analysis["stability_score"] = analysis["physics_stable_episodes"] / episode_count
-        analysis["gentle_contact_rate"] = analysis["gentle_contact_rate"] / episode_count
+        analysis["gentle_contact_rate"] = analysis["contact_episodes"] / episode_count
         
         return analysis
     
