@@ -15,28 +15,38 @@ import time
 
 # Setup Ubuntu MuJoCo compatibility
 def setup_ubuntu_mujoco():
-    """Setup MuJoCo for Ubuntu headless training"""
+    """Setup MuJoCo for Ubuntu with proper RGB rendering"""
     if platform.system() == "Linux":
         print("🐧 Configuring MuJoCo for Ubuntu...")
         
-        # Force EGL rendering for headless operation
-        os.environ["MUJOCO_GL"] = "egl"
+        # Check if we have a display available
+        has_display = "DISPLAY" in os.environ
         
-        # Force headless mode
-        os.environ["MUJOCO_HEADLESS"] = "1"
+        if has_display:
+            # If display is available, use GLFW for better RGB rendering
+            print("   Display detected - using GLFW for RGB support")
+            os.environ["MUJOCO_GL"] = "glfw"
+            # Don't force headless mode
+            if "MUJOCO_HEADLESS" in os.environ:
+                del os.environ["MUJOCO_HEADLESS"]
+        else:
+            # Only use EGL if truly headless
+            print("   No display detected - using EGL (RGB may be limited)")
+            os.environ["MUJOCO_GL"] = "egl"
+            os.environ["MUJOCO_HEADLESS"] = "1"
         
-        # Disable X11 dependencies
-        if "DISPLAY" in os.environ:
-            del os.environ["DISPLAY"]
-        
-        # Additional OpenGL stability
+        # OpenGL settings for stability
         os.environ["MESA_GL_VERSION_OVERRIDE"] = "3.3"
         os.environ["MESA_GLSL_VERSION_OVERRIDE"] = "330"
-        os.environ["MUJOCO_GL_DISABLE_EXTENSIONS"] = "1"
         
-        print("✅ Ubuntu MuJoCo environment configured")
+        # Don't disable extensions - they may be needed for proper rendering
+        if "MUJOCO_GL_DISABLE_EXTENSIONS" in os.environ:
+            del os.environ["MUJOCO_GL_DISABLE_EXTENSIONS"]
+        
+        print("Ubuntu MuJoCo environment configured")
     elif platform.system() == "Darwin":
-        print("🍎 macOS detected - using Apple Silicon optimizations")
+        print("macOS detected - using Apple Silicon optimizations")
+        os.environ["MUJOCO_GL"] = "glfw"
 
 # Apply Ubuntu fixes immediately
 setup_ubuntu_mujoco()
@@ -70,7 +80,7 @@ class IntegratedTrainer:
             print("Visual training mode enabled - you can watch the training process")
             self.config["environment"]["render_mode"] = "human"
         
-        # Setup device for M2
+        # Setup device
         self.setup_device()
         
         self.setup_directories()
@@ -81,22 +91,31 @@ class IntegratedTrainer:
         self.model = None
         
     def load_config(self, config_path: Optional[str] = None) -> Dict:
-        """Load fixed training configuration"""
+        """Load training configuration"""
         if config_path and Path(config_path).exists():
             with open(config_path, 'r') as f:
-                return yaml.safe_load(f)
+                config = yaml.safe_load(f)
+                
+            # Ensure headless mode is disabled for RGB rendering on Linux
+            if platform.system() == "Linux" and "DISPLAY" in os.environ:
+                if "headless" in config.get("environment", {}):
+                    config["environment"]["headless"] = False
+                    print("   Disabled headless mode for RGB rendering")
+                    
+            return config
         
-        # Fixed default configuration
+        # Default configuration
         return {
             "environment": {
                 "xml_file": "custom_scene.xml",
                 "camera_resolution": 64,
                 "control_mode": "joint",
                 "use_stuck_detection": True,
-                "use_domain_randomization": False,  # Start stable
+                "use_domain_randomization": False,
                 "frame_skip": 5,
                 "initial_curriculum_level": 0.1,
                 "render_mode": None,
+                "headless": False,  # Ensure RGB rendering works
             },
             "training": {
                 "total_timesteps": 500_000,  
@@ -123,10 +142,13 @@ class IntegratedTrainer:
         }
     
     def setup_device(self):
-        """Setup device for MacBook Pro M2 or RTX 4060"""
+        """Setup device for training"""
         if torch.cuda.is_available():
             self.device = "cuda"
-            print("Using CUDA acceleration")
+            print(f"Using CUDA acceleration (GPU: {torch.cuda.get_device_name(0)})")
+            # RTX 4060 optimizations
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cuda.matmul.allow_tf32 = True
         elif torch.backends.mps.is_available():
             self.device = "mps"
             print("Using Apple Silicon MPS acceleration")
@@ -153,31 +175,60 @@ class IntegratedTrainer:
         with open(self.exp_dir / "config.yaml", 'w') as f:
             yaml.dump(self.config, f)
             
-        print(f" Experiment directory: {self.exp_dir}")
+        print(f"📁 Experiment directory: {self.exp_dir}")
     
     def create_env(self):
-        """Create fixed environment with proper configuration"""
-        print("\n Starting Integrated Training")
+        """Create environment with RGB rendering validation"""
+        print("\n🚀 Starting Integrated Training")
         print("="*50)
-        print(f" Target: 70%+ real-world success rate")
-        print(f" RealSense D435i camera simulation")
-        print(f" SimToRealCNN with camera memory")
-        print(f" Progressive curriculum learning")
-        print(f" MacBook Pro M2 optimized")
+        print(f"🎯 Target: 70%+ real-world success rate")
+        print(f"📷 RealSense D435i camera simulation")
+        print(f"🧠 SimToRealCNN with camera memory")
+        print(f"📈 Progressive curriculum learning")
+        print(f"💻 Platform: {platform.system()} - {self.device}")
         print("="*50)
         
-        env = UR5ePickPlaceEnvEnhanced(**self.config["environment"])
+        # Create environment with explicit headless=False for RGB
+        env_config = self.config["environment"].copy()
+        if platform.system() == "Linux":
+            env_config["headless"] = False
+            
+        env = UR5ePickPlaceEnvEnhanced(**env_config)
+        
+        # Validate RGB rendering is working
+        print("\n🔍 Validating RGB rendering...")
+        obs, _ = env.reset()
+        self._validate_rgb_rendering(obs, "Initial environment test")
         
         # Wrap with Monitor for logging
         env = Monitor(env, filename=str(self.exp_dir / "monitor.csv"))
         
-        self.train_env = DummyVecEnv([lambda: env])
+        # Create vectorized environment
+        if platform.system() == "Linux":
+            # For Linux, ensure each subprocess also has proper GL settings
+            def make_env():
+                # Ensure GL settings are propagated to subprocess
+                if "DISPLAY" in os.environ:
+                    os.environ["MUJOCO_GL"] = "glfw"
+                    if "MUJOCO_HEADLESS" in os.environ:
+                        del os.environ["MUJOCO_HEADLESS"]
+                
+                env_config = self.config["environment"].copy()
+                env_config["headless"] = False
+                return Monitor(UR5ePickPlaceEnvEnhanced(**env_config))
+            
+            # Create multiple environments for parallel training
+            n_envs = self.config.get("environment", {}).get("n_envs", 2)
+            self.train_env = DummyVecEnv([make_env for _ in range(n_envs)])
+        else:
+            # For other platforms, use simple setup
+            self.train_env = DummyVecEnv([lambda: env])
         
         self.train_env = VecNormalize(
             self.train_env, 
             norm_obs=True, 
             norm_reward=True, 
-            clip_obs=10.0,     # Conservative clipping
+            clip_obs=10.0,
             clip_reward=10.0,  
             gamma=self.config["training"]["gamma"]
         )
@@ -185,6 +236,7 @@ class IntegratedTrainer:
         # Evaluation environment
         eval_env_config = self.config["environment"].copy()
         eval_env_config["render_mode"] = None
+        eval_env_config["headless"] = False  # Ensure RGB works in eval too
         eval_env = UR5ePickPlaceEnvEnhanced(**eval_env_config)
         eval_env = Monitor(eval_env)
         self.eval_env = DummyVecEnv([lambda: eval_env])
@@ -201,16 +253,56 @@ class IntegratedTrainer:
         # Initialize curriculum manager
         self.curriculum_manager = CurriculumManager(env)
         
-        print(f" Environment created with camera resolution: {self.config['environment']['camera_resolution']}")
-        print(f" Curriculum manager initialized")
+        print(f"✅ Environment created with camera resolution: {self.config['environment']['camera_resolution']}")
+        print(f"✅ Curriculum manager initialized")
         
-        # Verify environment works
+        # Final RGB validation
         obs = self.train_env.reset()
-        print(f" Environment reset successful, observation shape: {obs.shape}")
+        self._validate_rgb_rendering(obs[0], "Vectorized environment test")
+    
+    def _validate_rgb_rendering(self, obs: np.ndarray, context: str = ""):
+        """Validate that RGB data is being rendered properly"""
+        try:
+            cam_res = self.config["environment"]["camera_resolution"]
+            
+            # Extract RGB data (same indices as in test script)
+            rgb_start_idx = 55  # After kinematic data
+            rgb_end_idx = rgb_start_idx + (cam_res * cam_res * 3)
+            
+            if len(obs) >= rgb_end_idx:
+                rgb_obs = obs[rgb_start_idx:rgb_end_idx]
+                rgb_mean = np.mean(rgb_obs)
+                rgb_std = np.std(rgb_obs)
+                rgb_max = np.max(rgb_obs)
+                
+                if rgb_max == 0.0:
+                    print(f"⚠️  RGB RENDERING ISSUE - {context}")
+                    print(f"   RGB data is all zeros! This will prevent visual learning.")
+                    print(f"   Attempting to diagnose...")
+                    
+                    # Check environment variables
+                    print(f"   MUJOCO_GL: {os.environ.get('MUJOCO_GL', 'not set')}")
+                    print(f"   MUJOCO_HEADLESS: {os.environ.get('MUJOCO_HEADLESS', 'not set')}")
+                    print(f"   DISPLAY: {os.environ.get('DISPLAY', 'not set')}")
+                    
+                    # Try to fix by switching renderer
+                    if platform.system() == "Linux" and os.environ.get("MUJOCO_GL") == "egl":
+                        print("   Attempting to switch from EGL to GLFW...")
+                        os.environ["MUJOCO_GL"] = "glfw"
+                        if "MUJOCO_HEADLESS" in os.environ:
+                            del os.environ["MUJOCO_HEADLESS"]
+                else:
+                    print(f"✅ RGB rendering validated - {context}")
+                    print(f"   RGB: mean={rgb_mean:.3f}, std={rgb_std:.3f}, max={rgb_max:.3f}")
+            else:
+                print(f"⚠️  Cannot validate RGB - observation too short")
+                
+        except Exception as e:
+            print(f"⚠️  RGB validation error: {e}")
     
     def create_model(self):
         """Create PPO model with fixed hyperparameters"""
-        print(" Creating PPO model with SimToRealCNN...")
+        print("\n🧠 Creating PPO model with SimToRealCNN...")
         
         # Ensure tensorboard directory exists
         tensorboard_log = str(self.exp_dir / "tensorboard")
@@ -247,7 +339,7 @@ class IntegratedTrainer:
             ent_coef=self.config["training"]["ent_coef"],
             vf_coef=self.config["training"]["vf_coef"],
             max_grad_norm=self.config["training"]["max_grad_norm"],
-            target_kl=None,
+            target_kl=self.config["training"].get("target_kl", None),
             normalize_advantage=True,
             policy_kwargs=policy_kwargs,
             tensorboard_log=tensorboard_log,
@@ -255,21 +347,38 @@ class IntegratedTrainer:
             verbose=1,
         )
         
-        print(f" Model created with device: {self.device}")
-        print(f"📊 Policy architecture: {self.model.policy}")
+        print(f"✅ Model created with device: {self.device}")
+        print(f"📊 Policy architecture: {policy_kwargs}")
 
     def create_callbacks(self):
         """Create training callbacks"""
         callbacks = []
         
-        # Detailed logging callback with enhanced reward tracking
-        detailed_logger = DetailedLoggingCallback(
+        # Detailed logging callback with RGB monitoring
+        class RGBMonitoringCallback(DetailedLoggingCallback):
+            def __init__(self, trainer, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.trainer = trainer
+                self.rgb_check_freq = 10000  # Check RGB every 10k steps
+                
+            def _on_step(self) -> bool:
+                result = super()._on_step()
+                
+                # Periodic RGB validation
+                if self.n_calls % self.rgb_check_freq == 0:
+                    obs = self.trainer.train_env.reset()
+                    self.trainer._validate_rgb_rendering(obs[0], f"Step {self.n_calls}")
+                    
+                return result
+        
+        detailed_logger = RGBMonitoringCallback(
+            self,
             log_freq=self.config["training"]["detailed_log_freq"],
             curriculum_manager=self.curriculum_manager
         )
         callbacks.append(detailed_logger)
         
-        # Checkpoint callback with more frequent saves during learning phases
+        # Checkpoint callback
         checkpoint_callback = CheckpointCallback(
             save_freq=self.config["logging"]["save_freq"],
             save_path=str(self.exp_dir / "checkpoints"),
@@ -278,7 +387,7 @@ class IntegratedTrainer:
         )
         callbacks.append(checkpoint_callback)
         
-        # Evaluation callback with learning progress analysis
+        # Evaluation callback
         eval_callback = EvalCallback(
             self.eval_env,
             best_model_save_path=str(self.exp_dir / "best_model"),
@@ -290,17 +399,17 @@ class IntegratedTrainer:
         )
         callbacks.append(eval_callback)
         
-        # Progressive callback with learning-aware curriculum advancement
+        # Progressive callback
         progressive_callback = ProgressiveTrainingCallback(
             eval_env=self.eval_env,
             eval_freq=self.config["evaluation"]["eval_freq"],
             n_eval_episodes=self.config["evaluation"]["n_eval_episodes"],
-            curriculum_threshold=0.05,  # Very low initial threshold for approach learning
+            curriculum_threshold=0.05,
             randomization_schedule={
-                0: 0.0,           # No randomization initially
-                200_000: 0.1,     # Very light randomization
-                400_000: 0.3,     # Moderate randomization
-                800_000: 0.5,     # More randomization
+                0: 0.0,
+                200_000: 0.1,
+                400_000: 0.3,
+                800_000: 0.5,
             },
         )
         callbacks.append(progressive_callback)
@@ -312,10 +421,10 @@ class IntegratedTrainer:
         if isinstance(self.train_env, VecNormalize) and isinstance(self.eval_env, VecNormalize):
             self.eval_env.obs_rms = self.train_env.obs_rms
             self.eval_env.ret_rms = self.train_env.ret_rms
-            print(" VecNormalize stats synced from training to evaluation environment")
+            print("✅ VecNormalize stats synced from training to evaluation environment")
     
     def train(self):
-        """Main training loop with fixed settings"""
+        """Main training loop with RGB monitoring"""
         self.create_env()
         self.create_model()
         callbacks = self.create_callbacks()
@@ -323,8 +432,13 @@ class IntegratedTrainer:
         # Sync VecNormalize stats
         self.sync_vecnormalize_stats()
         
+        # Final RGB check before training
+        print("\n🔍 Final RGB validation before training...")
+        obs = self.train_env.reset()
+        self._validate_rgb_rendering(obs[0], "Pre-training final check")
+        
         # Train with fixed hyperparameters
-        print(f"\n Training for {self.config['training']['total_timesteps']:,} timesteps...")
+        print(f"\n🏃 Training for {self.config['training']['total_timesteps']:,} timesteps...")
         
         # Enhanced training monitoring
         start_time = time.time()
@@ -337,7 +451,7 @@ class IntegratedTrainer:
                 progress_bar=True,
             )
         except KeyboardInterrupt:
-            print("\n Training interrupted by user")
+            print("\n⚠️  Training interrupted by user")
             
         # Training completion summary
         end_time = time.time()
@@ -359,20 +473,19 @@ class IntegratedTrainer:
         print(f"\n🔍 Debugging Step Count:")
         print(f"   Configured total timesteps: {self.config['training']['total_timesteps']:,}")
         print(f"   Actual completed timesteps: {actual_timesteps:,}")
-        print(f"   Using actual timesteps for prediction...")
         
         self.predict_breakthrough_timeline(actual_timesteps)
         
         # Save final model
-        print("\n Saving final model...")
+        print("\n💾 Saving final model...")
         self.model.save(str(self.exp_dir / "final_model"))
         self.train_env.save(str(self.exp_dir / "vec_normalize.pkl"))
         
-        print(f"\n Training completed!")
-        print(f" Results saved to: {self.exp_dir}")
+        print(f"\n✅ Training completed!")
+        print(f"📁 Results saved to: {self.exp_dir}")
         
         # Print tensorboard command
-        print(f"\n View training progress with:")
+        print(f"\n📊 View training progress with:")
         print(f"   tensorboard --logdir {self.exp_dir / 'tensorboard'}")
     
     def test_model(self, model_path: Optional[str] = None, n_episodes: int = 5):
@@ -380,7 +493,7 @@ class IntegratedTrainer:
         if model_path is None:
             model_path = self.exp_dir / "best_model"
             
-        print(f"\n Testing model: {model_path}")
+        print(f"\n🧪 Testing model: {model_path}")
         
         # Load model
         model = PPO.load(str(model_path / "best_model.zip"))
@@ -388,6 +501,7 @@ class IntegratedTrainer:
         test_env_config = self.config["environment"].copy()
         test_env_config["render_mode"] = "human"
         test_env_config["use_domain_randomization"] = False
+        test_env_config["headless"] = False  # Ensure RGB works
         
         env = UR5ePickPlaceEnvEnhanced(**test_env_config)
         
@@ -396,17 +510,18 @@ class IntegratedTrainer:
         total_rewards = []
         
         for episode in range(n_episodes):
-            print(f"\n Episode {episode + 1}/{n_episodes}")
+            print(f"\n📺 Episode {episode + 1}/{n_episodes}")
             
             obs, info = env.reset()
             done = False
             episode_reward = 0
             step_count = 0
             
-            # Log initial object perception
+            # Log initial object perception and RGB status
             self._log_object_perception(env, obs, step_count, episode)
+            self._validate_rgb_rendering(obs, f"Test episode {episode}")
             
-            while not done and step_count < 500:  # Shorter episodes for testing
+            while not done and step_count < 500:
                 action, _ = model.predict(obs, deterministic=True)
                 obs, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
@@ -473,7 +588,7 @@ class IntegratedTrainer:
                         print(f"       Position: [{obj_pos[0]:.3f}, {obj_pos[1]:.3f}, {obj_pos[2]:.3f}]")
                         print(f"       Size: {obj_size}")
                         print(f"       Camera Sees: {camera_sees}")
-                        print(f"   👁 CNN Perception:")
+                        print(f"   👁️ CNN Perception:")
                         print(f"{cnn_analysis}")
                         
         except Exception as e:
@@ -500,22 +615,15 @@ class IntegratedTrainer:
     def _analyze_visual_perception(self, obs: np.ndarray) -> str:
         """
         Analyzes the visual part of the observation vector (RGB and Depth).
-        This logic is based on the working test script to ensure consistency.
         """
         try:
             cam_res = self.config["environment"]["camera_resolution"]
             
-            # The observation vector contains kinematic data followed by camera data.
-            # Based on the env and working test script, the camera data starts at index 56.
-            # Total obs length = 55 (kinematics) + (64*64*4) (camera) + 1 (visibility) = 16440
-            # Camera data length is 16384 (for 64x64 res)
-            
             if len(obs) < 56 + (cam_res * cam_res * 4):
                 return "   ⚠️ Observation too short for camera analysis."
             
-            # Define indices for RGB and Depth data within the observation vector
-            # These are based on the structure defined in UR5ePickPlaceEnvEnhanced and test scripts
-            rgb_start_idx = 55  # Kinematic data is 55 elements (0-54)
+            # Define indices for RGB and Depth data
+            rgb_start_idx = 55  # Kinematic data is 55 elements
             rgb_end_idx = rgb_start_idx + (cam_res * cam_res * 3)
             depth_start_idx = rgb_end_idx
             
@@ -541,8 +649,8 @@ class IntegratedTrainer:
                 f"      Visual Content: RGB={'✅' if rgb_has_content else '❌'}, Depth={'✅' if depth_has_content else '❌'}"
             )
             
-            if not (rgb_has_content or depth_has_content):
-                analysis_str += "\n      ⚠️ WARNING: Low visual variation - CNN may not see object clearly!"
+            if not rgb_has_content:
+                analysis_str += "\n      ⚠️ WARNING: No RGB variation - visual learning impaired!"
                 
             return analysis_str
 
@@ -552,7 +660,7 @@ class IntegratedTrainer:
     def _log_evaluation_perception(self):
         """Log object perception during evaluation phases"""
         try:
-            print("\nEvaluation Object Perception Summary:")
+            print("\n📊 Evaluation Object Perception Summary:")
             
             # Get the environment from eval_env
             if hasattr(self.eval_env, 'envs') and len(self.eval_env.envs) > 0:
@@ -563,6 +671,7 @@ class IntegratedTrainer:
                 
                 # Log what we see
                 self._log_object_perception(env, obs[0], 0, "eval")
+                self._validate_rgb_rendering(obs[0], "Evaluation environment")
                 
         except Exception as e:
             print(f"   ⚠️ Evaluation perception logging failed: {e}")
@@ -570,7 +679,7 @@ class IntegratedTrainer:
     def _log_final_training_stats(self):
         """Log comprehensive training completion statistics"""
         try:
-            print(f"\nFinal Training Analysis:")
+            print(f"\n📊 Final Training Analysis:")
             
             # Policy network statistics
             if hasattr(self.model.policy, 'mlp_extractor'):
@@ -657,7 +766,7 @@ class IntegratedTrainer:
     def predict_breakthrough_timeline(self, current_step: int):
         """Predict when first successes might emerge based on actual curriculum structure"""
         try:
-            print(f"\n Curriculum Timeline Prediction:")
+            print(f"\n⏱️ Curriculum Timeline Prediction:")
             
             # Actual curriculum phase durations from curriculum_manager.py (5 phases total)
             phase_1_approach = 5_000_000     # Phase 1: approach_learning
@@ -736,7 +845,7 @@ class IntegratedTrainer:
             
             # Training health indicators based on actual phase
             current_phase_str = phase_name if current_phase_num != "Complete" else "Complete"
-            print(f"\n   Training Health:")
+            print(f"\n   💪 Training Health:")
             if current_phase_num == 1:
                 print(f"       ✅ Currently learning: Basic approach strategies")
                 print(f"       ✅ Phase 1 rewards: Gentle contact & exploration")
@@ -775,8 +884,8 @@ def main():
     """Main entry point"""
     import argparse
     
-    parser = argparse.ArgumentParser(description="UR5e Training")
-    parser.add_argument("--config", type=str, default="config_m2_optimized.yaml", 
+    parser = argparse.ArgumentParser(description="UR5e Training with RGB Fix")
+    parser.add_argument("--config", type=str, default="config_rtx4060_optimized.yaml", 
                        help="Path to config file")
     parser.add_argument("--visual", action="store_true", 
                        help="Enable visual training mode")
@@ -785,7 +894,8 @@ def main():
     
     args = parser.parse_args()
 
-    print("UR5e Pick-Place Training System")
+    print("🤖 UR5e Pick-Place Training System")
+    print("🔧 Fixed for RGB rendering on Ubuntu")
 
     trainer = IntegratedTrainer(args.config, visual_training=args.visual)
 
