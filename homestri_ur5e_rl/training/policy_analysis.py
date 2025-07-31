@@ -127,7 +127,7 @@ class PolicyAnalyzer:
         return trajectories
         
     def analyze_action_distribution(self):
-        """Analyze action distribution across episodes"""
+        """Analyze action discurriculum_managertribution across episodes"""
         
         all_actions = []
         for traj in self.trajectories:

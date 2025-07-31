@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Progressive Training Callback for Curriculum Learning
+Progressive Training Callback for Curriculum Learning - FIXED
 Gradually increases task difficulty and domain randomization
 """
 
@@ -12,7 +12,7 @@ import wandb
 
 class ProgressiveTrainingCallback(BaseCallback):
     """
-    Implements curriculum learning and progressive domain randomization
+    Implements curriculum learning and progressive domain randomization - FIXED
     """
     
     def __init__(
@@ -60,7 +60,7 @@ class ProgressiveTrainingCallback(BaseCallback):
         return True
         
     def _update_domain_randomization(self):
-        """Update domain randomization level based on schedule"""
+        """Update domain randomization level based on schedule - FIXED"""
         current_timestep = self.num_timesteps
         new_level = 0.1
         
@@ -71,11 +71,25 @@ class ProgressiveTrainingCallback(BaseCallback):
         if new_level != self.current_randomization_level:
             self.current_randomization_level = new_level
             
-            # Update environments
+            # FIXED: Robust environment method calling
             if hasattr(self.training_env, "env_method"):
                 try:
-                    self.training_env.env_method("set_randomization_level", new_level)
-                except:
+                    # Check if the environment actually has the method before calling
+                    if hasattr(self.training_env, "get_attr"):
+                        # Test if any environment has the method
+                        try:
+                            test_attrs = self.training_env.get_attr("set_randomization_level", indices=[0])
+                            if test_attrs and callable(test_attrs[0]):
+                                self.training_env.env_method("set_randomization_level", new_level)
+                        except (AttributeError, IndexError):
+                            # Method doesn't exist, skip silently
+                            pass
+                    else:
+                        # Fallback: try calling the method with error handling
+                        self.training_env.env_method("set_randomization_level", new_level)
+                except Exception as e:
+                    if self.verbose > 0:
+                        print(f"   Warning: Could not set randomization level: {e}")
                     pass
                     
             if self.verbose > 0:
@@ -211,11 +225,22 @@ class ProgressiveTrainingCallback(BaseCallback):
             old_level = self.current_curriculum_level
             self.current_curriculum_level = min(1.0, self.current_curriculum_level + 0.1)
             
-            # Update environments
+            # FIXED: Robust curriculum level updating
             if hasattr(self.training_env, "env_method"):
                 try:
-                    self.training_env.env_method("set_curriculum_level", self.current_curriculum_level)
-                except:
+                    # Check if the environment has the method
+                    if hasattr(self.training_env, "get_attr"):
+                        try:
+                            test_attrs = self.training_env.get_attr("set_curriculum_level", indices=[0])
+                            if test_attrs and callable(test_attrs[0]):
+                                self.training_env.env_method("set_curriculum_level", self.current_curriculum_level)
+                        except (AttributeError, IndexError):
+                            pass
+                    else:
+                        self.training_env.env_method("set_curriculum_level", self.current_curriculum_level)
+                except Exception as e:
+                    if self.verbose > 0:
+                        print(f"   Warning: Could not set curriculum level: {e}")
                     pass
                     
             if self.verbose > 0:
