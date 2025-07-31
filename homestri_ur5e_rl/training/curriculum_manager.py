@@ -96,7 +96,7 @@ class CurriculumManager:
         self._apply_phase_settings()
         
     def update(self, success_rate: float, collision_info: Dict[str, Any] = None) -> Dict[str, Any]:
-        """FIXED update that allows progression even with 0% task success"""
+        """update that allows progression even with 0% task success"""
         self.success_history.append(success_rate)
         
         if collision_info:

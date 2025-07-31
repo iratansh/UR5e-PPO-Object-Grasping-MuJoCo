@@ -461,7 +461,7 @@ class UR5ePickPlaceEnvEnhanced(MujocoEnv, StuckDetectionMixin):
             self.data.ctrl[self.gripper_actuator_id] = 0
 
     def _compute_reasonable_reward(self, action: np.ndarray) -> Tuple[float, Dict]:
-        """Reasonable reward structure that doesn't cause extreme negatives"""
+        """Fixed reward structure that guides learning better"""
         reward_components = {}
         total_reward = 0.0
         
@@ -471,77 +471,117 @@ class UR5ePickPlaceEnvEnhanced(MujocoEnv, StuckDetectionMixin):
             obj_pos = self.data.body(obj_id).xpos.copy()
             gripper_pos = self.data.site_xpos[self.gripper_site_id].copy()
             
-            # Main guidance reward - distance-based, normalized
+            # Main guidance reward - distance-based with better scaling
             dist_to_obj = np.linalg.norm(gripper_pos - obj_pos)
-            max_dist = 1.0  # Maximum expected distance
-            distance_reward = (max_dist - np.clip(dist_to_obj, 0, max_dist)) / max_dist
-            distance_reward *= self.reward_config['distance_reward_scale']
+            
+            # Use exponential decay for stronger gradient when far away
+            if dist_to_obj > 0.1:
+                distance_reward = 5.0 * np.exp(-3.0 * dist_to_obj)
+            else:
+                # Linear reward when close to encourage final approach
+                distance_reward = 5.0 * (0.1 - dist_to_obj) / 0.1
+            
+            distance_reward = np.clip(distance_reward, 0, 5.0)
             reward_components['distance'] = distance_reward
             total_reward += distance_reward
             
-            # Approach bonus - when getting close
-            if dist_to_obj < 0.2:
-                approach_bonus = self.reward_config['approach_bonus'] * (0.2 - dist_to_obj) / 0.2
+            # Approach bonus - when getting close (one-time)
+            if dist_to_obj < 0.1 and not hasattr(self, '_approach_achieved'):
+                self._approach_achieved = True
+                approach_bonus = self.reward_config['approach_bonus']
                 reward_components['approach'] = approach_bonus
                 total_reward += approach_bonus
-            
-            if dist_to_obj < 0.03 and not hasattr(self, '_contact_achieved'):
-                self._contact_achieved = True
-                # Force curriculum progression check
+                # Force curriculum update on approach
                 if self.curriculum_manager:
-                    self.curriculum_manager.update(1.0)  # Perfect success for contact
+                    self.curriculum_manager.update(0.01)  # 1% progress signal
             
             # Contact bonus - when very close
             if dist_to_obj < 0.05:
                 contact_bonus = self.reward_config['contact_bonus']
                 reward_components['contact'] = contact_bonus
                 total_reward += contact_bonus
+                
+                # Force curriculum update on contact
+                if dist_to_obj < 0.03 and not hasattr(self, '_contact_achieved'):
+                    self._contact_achieved = True
+                    if self.curriculum_manager:
+                        self.curriculum_manager.update(0.05)  # 5% progress signal
             
             # Grasp detection and rewards
             gripper_closed = self.data.ctrl[self.gripper_actuator_id] > 200
+            
+            # Check for actual grasp (not just proximity)
             if not self.object_grasped and gripper_closed and dist_to_obj < 0.03:
-                self.object_grasped = True
-                grasp_bonus = self.reward_config['grasp_bonus']
-                reward_components['grasp'] = grasp_bonus
-                total_reward += grasp_bonus
-                print(f"🤏 Object grasped! Bonus: {grasp_bonus}")
+                # Additional check: is object velocity similar to gripper velocity?
+                gripper_vel = self.data.site_xvel[self.gripper_site_id][:3]
+                obj_body = self.data.body(obj_id)
+                obj_vel = obj_body.cvel[:3] if hasattr(obj_body, 'cvel') else np.zeros(3)
                 
+                vel_diff = np.linalg.norm(gripper_vel - obj_vel)
+                
+                if vel_diff < 0.5:  # Objects moving together
+                    self.object_grasped = True
+                    grasp_bonus = self.reward_config['grasp_bonus']
+                    reward_components['grasp'] = grasp_bonus
+                    total_reward += grasp_bonus
+                    print(f"🤏 Object grasped! Bonus: {grasp_bonus}")
+                    # Major curriculum signal
+                    if self.curriculum_manager:
+                        self.curriculum_manager.update(0.5)  # 50% progress
+            
+            # Stable grasp reward (per timestep while holding)
+            if self.object_grasped:
+                if gripper_closed and dist_to_obj < 0.05:
+                    stable_reward = 0.5  # Small per-step reward
+                    reward_components['stable_grasp'] = stable_reward
+                    total_reward += stable_reward
+                else:
+                    # Lost grasp
+                    self.object_grasped = False
+                    lost_penalty = -2.0
+                    reward_components['grasp_lost'] = lost_penalty
+                    total_reward += lost_penalty
+            
             # Lift bonus
             if self.object_grasped and obj_pos[2] > self.object_initial_pos[2] + 0.05:
-                lift_bonus = self.reward_config['lift_bonus']
-                reward_components['lift'] = lift_bonus
-                total_reward += lift_bonus
-                
+                if not hasattr(self, '_lift_achieved'):
+                    self._lift_achieved = True
+                    lift_bonus = self.reward_config['lift_bonus']
+                    reward_components['lift'] = lift_bonus
+                    total_reward += lift_bonus
+                    print(f"📈 Object lifted!")
+            
             # Placement bonus
             if self.target_position is not None:
                 dist_to_target = np.linalg.norm(obj_pos[:2] - self.target_position[:2])
-                if dist_to_target < 0.05:
-                    place_bonus = self.reward_config['place_bonus']
-                    reward_components['place'] = place_bonus
-                    total_reward += place_bonus
-                    
+                
+                # Only give placement reward if object is grasped
+                if self.object_grasped and dist_to_target < 0.2:
+                    placement_guidance = (0.2 - dist_to_target) * 5.0
+                    reward_components['placement'] = placement_guidance
+                    total_reward += placement_guidance
+                
+                # Check success
+                if dist_to_target < 0.052 and abs(obj_pos[2] - self.target_position[2]) < 0.025:
                     if self._check_success():
                         success_bonus = self.reward_config['success_bonus']
                         reward_components['success'] = success_bonus
                         total_reward += success_bonus
+                        # Full curriculum signal
+                        if self.curriculum_manager:
+                            self.curriculum_manager.update(1.0)  # 100% success
         
-        # Small, reasonable penalties
+        # Minimal penalties
         time_penalty = self.reward_config['time_penalty']
         reward_components['time'] = time_penalty
         total_reward += time_penalty
         
-        # Energy penalty - very small
-        energy_penalty = self.reward_config['energy_penalty'] * np.sum(np.square(action[:6]))
-        reward_components['energy'] = energy_penalty
-        total_reward += energy_penalty
-        
-        # Velocity penalty - only for extreme velocities
-        joint_velocities = self.data.qvel[:6] if len(self.data.qvel) >= 6 else np.zeros(6)
-        high_velocity_count = np.sum(np.abs(joint_velocities) > self.reward_config['velocity_penalty_threshold'])
-        if high_velocity_count > 0:
-            velocity_penalty = self.reward_config['velocity_penalty_scale'] * high_velocity_count
-            reward_components['velocity'] = velocity_penalty
-            total_reward += velocity_penalty
+        # Action magnitude penalty (encourage smaller actions)
+        action_magnitude = np.linalg.norm(action[:6])
+        if action_magnitude > 0.5:
+            action_penalty = -0.1 * (action_magnitude - 0.5)
+            reward_components['action_magnitude'] = action_penalty
+            total_reward += action_penalty
         
         # Physics stability penalty
         if not self.physics_stable:
@@ -549,6 +589,11 @@ class UR5ePickPlaceEnvEnhanced(MujocoEnv, StuckDetectionMixin):
             reward_components['physics'] = physics_penalty
             total_reward += physics_penalty
         
+        # Clear achievement flags on reset
+        if not hasattr(self, '_reset_called'):
+            self._reset_called = False
+        
+        # Clip total reward
         total_reward = np.clip(total_reward, -10.0, 50.0)
         
         return total_reward, reward_components
@@ -746,7 +791,13 @@ class UR5ePickPlaceEnvEnhanced(MujocoEnv, StuckDetectionMixin):
             return False
 
     def reset_model(self) -> np.ndarray:
-        """Reset with guaranteed robot positioning and physics stability"""
+        """Reset with cleared achievement flags"""
+        # Clear achievement tracking
+        for attr in ['_approach_achieved', '_contact_achieved', '_lift_achieved']:
+            if hasattr(self, attr):
+                delattr(self, attr)
+        
+        # Continue with original reset logic
         # Reset to initial state
         self.set_state(self.init_qpos, self.init_qvel)
 
@@ -794,7 +845,7 @@ class UR5ePickPlaceEnvEnhanced(MujocoEnv, StuckDetectionMixin):
             
             # Check visibility
             if self._check_camera_sees_object():
-                print(f" Object visible on attempt {attempt + 1}")
+                print(f"✅ Object visible on attempt {attempt + 1}")
                 break
             else:
                 print(f"Object not visible, attempt {attempt + 1}/{max_spawn_attempts}")

@@ -17,32 +17,26 @@ environment:
 training:
   total_timesteps: 27_000_000
   
-  # CRITICAL FIXES for stability
-  learning_rate: 0.00001  # 5x lower than your current (was 0.00005)
-  n_steps: 2048  # 4x larger (was 512)
-  batch_size: 128  # 4x larger (was 32)
+  learning_rate: 0.00001 
+  n_steps: 2048  
+  batch_size: 128  
   
-  n_epochs: 4  # Fewer updates per batch (was 5)
+  n_epochs: 4  
   gamma: 0.99
   gae_lambda: 0.95
   
-  # Relaxed clipping for stability
-  clip_range: 0.1  # 2x larger (was 0.05)
-  clip_range_vf: 0.1  # Added value function clipping
+  clip_range: 0.1
+  clip_range_vf: 0.1 
   
   normalize_advantage: true
   
-  # Better exploration
-  ent_coef: 0.005  # 10x higher (was 0.0005)
-  vf_coef: 0.5  # Reduced (was 1.0)
+  ent_coef: 0.005
+  vf_coef: 0.5 
+
+  max_grad_norm: 0.5 
+
+  target_kl: 0.02  
   
-  # Gradient clipping
-  max_grad_norm: 0.5  # 10x higher (was 0.05)
-  
-  # KL constraint
-  target_kl: 0.02  # 2x higher (was 0.01)
-  
-  # SDE for exploration
   use_sde: true
   sde_sample_freq: 4
   
@@ -73,7 +67,7 @@ curriculum:
     - name: "approach_learning"
       description: "Learn to approach and contact objects"
       timesteps: 3_000_000
-      success_threshold: 0.005  # Just 0.5% to advance!
+      success_threshold: 0.005  # Just 0.5% to advance
       domain_randomization_level: 0.0
       focus: "distance_reduction_and_contact"
       
@@ -119,16 +113,16 @@ reward_structure:
   
   # Minimal penalties
   time_penalty: -0.01
-  energy_penalty: 0.0      # Removed
+  energy_penalty: 0.0  
   velocity_penalty_threshold: 2.0
   velocity_penalty_scale: -0.01
   physics_violation_penalty: -5.0
   stuck_penalty: -0.5
 
 action_limits:
-  max_joint_velocity: 0.2  # Reduced (was 0.3)
-  max_action_magnitude: 0.05  # Halved (was 0.1)
-  action_scale: 0.01  # Halved (was 0.02)
+  max_joint_velocity: 0.2 
+  max_action_magnitude: 0.05  
+  action_scale: 0.01 
   action_smoothing_factor: 0.5  # More smoothing (was 0.3)
   max_consecutive_physics_errors: 5  # More tolerance
 
