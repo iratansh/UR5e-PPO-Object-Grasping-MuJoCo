@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 UR5e Pick-Place Environment with Homestri Integration
 This environment is designed for training UR5e robots in pick-and-place tasks
@@ -60,9 +59,9 @@ class UR5ePickPlaceEnvEnhanced(MujocoEnv, StuckDetectionMixin):
         self.use_domain_randomization = use_domain_randomization
         self.curriculum_level = np.clip(curriculum_level, 0.1, 1.0)
         
-        self.max_joint_velocity = 0.3  
-        self.max_action_magnitude = 0.1  
-        self.action_scale = 0.02 
+        self.max_joint_velocity = 0.5  # Increased from 0.3
+        self.max_action_magnitude = 0.2  # Increased from 0.1  
+        self.action_scale = 0.1  # Dramatically increased from 0.02 
 
         self.last_action = None
         self.action_smoothing_factor = 0.3  # Less aggressive smoothing
@@ -128,13 +127,13 @@ class UR5ePickPlaceEnvEnhanced(MujocoEnv, StuckDetectionMixin):
             self._setup_domain_randomization()
         
         self.reward_config = {
-            'distance_reward_scale': 2.0,        # Enhanced guidance signal
-            'approach_bonus': 0.5,               # Meaningful approach bonus  
-            'contact_bonus': 1.0,                # Contact reward
-            'grasp_bonus': 5.0,                  # Significant grasp reward
-            'lift_bonus': 3.0,                   # Lifting object
-            'place_bonus': 10.0,                 # Successful placement
-            'success_bonus': 20.0,               # Task completion
+            'distance_reward_scale': 10.0,       # Increased from 2.0 for stronger signal
+            'approach_bonus': 2.0,               # Increased from 0.5  
+            'contact_bonus': 5.0,                # Increased from 1.0
+            'grasp_bonus': 15.0,                 # Increased from 5.0
+            'lift_bonus': 10.0,                  # Increased from 3.0
+            'place_bonus': 20.0,                 # Increased from 10.0
+            'success_bonus': 50.0,               # Increased from 20.0
             
             # Minimal penalties to prevent accumulation
             'time_penalty': -0.0001,             # Ultra-small time penalty
@@ -471,22 +470,23 @@ class UR5ePickPlaceEnvEnhanced(MujocoEnv, StuckDetectionMixin):
             obj_pos = self.data.body(obj_id).xpos.copy()
             gripper_pos = self.data.site_xpos[self.gripper_site_id].copy()
             
-            # Main guidance reward - distance-based with better scaling
+            # Main guidance reward - distance-based with better scaling for large distances
             dist_to_obj = np.linalg.norm(gripper_pos - obj_pos)
             
-            # Use exponential decay for stronger gradient when far away
-            if dist_to_obj > 0.1:
-                distance_reward = 5.0 * np.exp(-3.0 * dist_to_obj)
-            else:
-                # Linear reward when close to encourage final approach
-                distance_reward = 5.0 * (0.1 - dist_to_obj) / 0.1
+            # FIXED: Much better reward function for long distances
+            if dist_to_obj > 0.5:  # Far away - use linear reward for strong gradient
+                distance_reward = 10.0 * (1.0 - min(dist_to_obj, 2.0) / 2.0)  # Max distance 2m
+            elif dist_to_obj > 0.1:  # Medium distance - exponential  
+                distance_reward = 5.0 + 5.0 * np.exp(-2.0 * (dist_to_obj - 0.1))
+            else:  # Close - linear reward for precision
+                distance_reward = 10.0 + 10.0 * (0.1 - dist_to_obj) / 0.1
             
-            distance_reward = np.clip(distance_reward, 0, 5.0)
+            distance_reward = np.clip(distance_reward, 0, 20.0)  # Increased max reward
             reward_components['distance'] = distance_reward
             total_reward += distance_reward
             
             # Approach bonus - when getting close (one-time)
-            if dist_to_obj < 0.1 and not hasattr(self, '_approach_achieved'):
+            if dist_to_obj < 0.2 and not hasattr(self, '_approach_achieved'):  # Increased threshold
                 self._approach_achieved = True
                 approach_bonus = self.reward_config['approach_bonus']
                 reward_components['approach'] = approach_bonus
@@ -496,13 +496,13 @@ class UR5ePickPlaceEnvEnhanced(MujocoEnv, StuckDetectionMixin):
                     self.curriculum_manager.update(0.01)  # 1% progress signal
             
             # Contact bonus - when very close
-            if dist_to_obj < 0.05:
+            if dist_to_obj < 0.08:  # Increased threshold from 0.05
                 contact_bonus = self.reward_config['contact_bonus']
                 reward_components['contact'] = contact_bonus
                 total_reward += contact_bonus
                 
                 # Force curriculum update on contact
-                if dist_to_obj < 0.03 and not hasattr(self, '_contact_achieved'):
+                if dist_to_obj < 0.05 and not hasattr(self, '_contact_achieved'):  # Keep stricter threshold for this bonus
                     self._contact_achieved = True
                     if self.curriculum_manager:
                         self.curriculum_manager.update(0.05)  # 5% progress signal
@@ -593,8 +593,8 @@ class UR5ePickPlaceEnvEnhanced(MujocoEnv, StuckDetectionMixin):
         if not hasattr(self, '_reset_called'):
             self._reset_called = False
         
-        # Clip total reward
-        total_reward = np.clip(total_reward, -10.0, 50.0)
+        # Clip total reward to higher range
+        total_reward = np.clip(total_reward, -10.0, 100.0)  # Increased from 50.0
         
         return total_reward, reward_components
 
@@ -676,21 +676,20 @@ class UR5ePickPlaceEnvEnhanced(MujocoEnv, StuckDetectionMixin):
                 pass
             
             # Standard success: object placed at target
-            # Increase tolerance to 5.2cm to account for physics settling precision
+            # More reasonable tolerance - 8cm instead of 5.2cm for initial learning
             distance_to_target = np.linalg.norm(obj_pos - self.target_position)
             
             # objects should be within reasonable placement zone
             height_diff_abs = abs(obj_pos[2] - self.target_position[2])
             height_diff_signed = obj_pos[2] - self.target_position[2]
             
-            # Allow settling below target, but be more strict about objects above target
-            # Fine-tuned thresholds based on actual physics settling analysis
+            # More lenient height tolerances for learning
             if height_diff_signed > 0:  # Object above target
-                height_correct = height_diff_abs <= 0.024  # 2.4cm above target max (fine-tuned for physics)
-            else:  # Object below target (more lenient for physics settling)
-                height_correct = height_diff_abs <= 0.0225  # 2.25cm below target max (fine-tuned for physics)
+                height_correct = height_diff_abs <= 0.04  # 4cm above target max (increased from 2.4cm)
+            else:  # Object below target (more lenient for physics settling)  
+                height_correct = height_diff_abs <= 0.04  # 4cm below target max (increased from 2.25cm)
             
-            placement_success = distance_to_target < 0.052 and height_correct
+            placement_success = distance_to_target < 0.08 and height_correct  # Increased from 0.052
             
             return placement_success
                 
