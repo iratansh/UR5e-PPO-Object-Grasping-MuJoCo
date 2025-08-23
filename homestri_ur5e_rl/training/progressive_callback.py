@@ -38,7 +38,7 @@ class ProgressiveTrainingCallback(BaseCallback):
         
         # Tracking
         self.best_success_rate = 0.0
-        self.current_curriculum_level = 0.1
+        self.current_curriculum_level = 0.05  # Match milestone_0_percent initial phase
         self.current_randomization_level = 0.1
         self.evaluation_history = []
         

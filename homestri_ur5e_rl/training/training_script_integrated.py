@@ -52,13 +52,14 @@ def setup_ubuntu_mujoco():
 # Apply Ubuntu fixes immediately
 setup_ubuntu_mujoco()
 
-# Add homestri to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import gymnasium as gym
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback, EvalCallback
+from homestri_ur5e_rl.training.curriculum_aware_eval_callback import CurriculumAwareEvalCallback
 from stable_baselines3.common.monitor import Monitor
 
 # Import fixed components
@@ -67,9 +68,10 @@ from homestri_ur5e_rl.training.sim_to_real_cnn import SimToRealCNNExtractor
 from homestri_ur5e_rl.training.progressive_callback import ProgressiveTrainingCallback
 from homestri_ur5e_rl.utils.detailed_logging_callback import DetailedLoggingCallback
 from homestri_ur5e_rl.training.curriculum_manager import CurriculumManager
+from homestri_ur5e_rl.training.performance_early_stopping_callback import PerformanceEarlyStoppingCallback
 
 class IntegratedTrainer:
-    """Trainer with proper action scaling and reasonable rewards"""
+    """Trainer with optimized hyperparameters for 200-step episodes and improved reward balance"""
     
     def __init__(self, config_path: Optional[str] = None, visual_training: bool = False):
         # Load configuration
@@ -112,32 +114,33 @@ class IntegratedTrainer:
                 "camera_resolution": 64,
                 "control_mode": "joint",
                 "use_stuck_detection": True,
-                "use_domain_randomization": False,
+                "use_domain_randomization": False,  # start disabled; enable after early grasps
                 "frame_skip": 5,
-                "initial_curriculum_level": 0.1,
+                "initial_curriculum_level": 0.05,  # Match milestone_0_percent phase level
                 "render_mode": None,
-                "headless": False,  # Ensure RGB rendering works
+                "headless": False,
             },
             "training": {
-                "total_timesteps": 500_000,  
-                "learning_rate": 0.0003,     
-                "n_steps": 2048,            
-                "batch_size": 64,           
-                "n_epochs": 10,
-                "gamma": 0.99,
+                "total_timesteps": 800_000,
+                "learning_rate": 0.0005,  # INCREASED: better learning with improved rewards
+                "n_steps": 400,  # REDUCED: optimal for 200-step episodes (2x episode length)
+                "batch_size": 200,  # REDUCED: matches shorter episodes better
+                "n_epochs": 8,  # REDUCED: prevent overfitting on smaller batches
+                "gamma": 0.995,
                 "gae_lambda": 0.95,
                 "clip_range": 0.2,
-                "ent_coef": 0.01,
+                "ent_coef": 0.005,  # SMALL INCREASE: encourage exploration
                 "vf_coef": 0.5,
-                "max_grad_norm": 0.5,
-                "detailed_log_freq": 2048,
+                "max_grad_norm": 0.7,
+                "detailed_log_freq": 1600,  # REDUCED: matches new n_steps
+                "target_kl": 0.02,
             },
             "evaluation": {
-                "eval_freq": 20_480,
+                "eval_freq": 16_000,  # REDUCED: matches new n_steps (40x400)
                 "n_eval_episodes": 5,
             },
             "logging": {
-                "save_freq": 51_200,
+                "save_freq": 40_000,  # REDUCED: matches new n_steps (100x400)
                 "log_interval": 10,
             }
         }
@@ -228,16 +231,17 @@ class IntegratedTrainer:
         self.train_env = VecNormalize(
             self.train_env, 
             norm_obs=True, 
-            norm_reward=True, 
+            norm_reward=False,  # REVERTED: Disable reward normalization to match baseline
             clip_obs=10.0,
-            clip_reward=10.0,  
+            clip_reward=25.0,  # FIXED: Match environment reward clipping bounds
             gamma=self.config["training"]["gamma"]
         )
         
-        # Evaluation environment
+        # Evaluation environment - should be deterministic for consistent evaluation
         eval_env_config = self.config["environment"].copy()
         eval_env_config["render_mode"] = None
         eval_env_config["headless"] = False  # Ensure RGB works in eval too
+        eval_env_config["use_domain_randomization"] = False  # Disable randomization for consistent evaluation
         eval_env = UR5ePickPlaceEnvEnhanced(**eval_env_config)
         eval_env = Monitor(eval_env)
         self.eval_env = DummyVecEnv([lambda: eval_env])
@@ -246,13 +250,43 @@ class IntegratedTrainer:
         self.eval_env = VecNormalize(
             self.eval_env, 
             norm_obs=True, 
-            norm_reward=False, 
+            norm_reward=False,  # REVERTED: Match training environment normalization
             clip_obs=10.0, 
+            clip_reward=25.0,  # FIXED: Match training environment clipping
             training=False
         )
         
-        # Initialize curriculum manager
-        self.curriculum_manager = CurriculumManager(env)
+        # Initialize curriculum manager with vectorized environment
+        # CRITICAL FIX: Create curriculum manager with reset callback
+        def reset_training_metrics():
+            """Reset training metrics when curriculum phase changes"""
+            print(f"   🔄 Resetting training metrics: grasps={self.total_grasps} → 0, successes={self.total_successes} → 0")
+            self.total_grasps = 0
+            self.total_successes = 0
+            # Note: Don't reset total_episodes as it should accumulate across phases
+            
+        self.curriculum_manager = CurriculumManager(self.train_env, on_phase_change_callback=reset_training_metrics)
+        
+        # FIXED: Set curriculum manager reference in environment for phase-aware success criteria
+        env.curriculum_manager = self.curriculum_manager
+        eval_env.curriculum_manager = self.curriculum_manager
+        
+        # CRITICAL FIX: Force evaluation environment to use SAME curriculum phase and success criteria as training
+        try:
+            # Force curriculum level sync immediately (not just during evaluation)
+            if hasattr(env, 'curriculum_level') and hasattr(eval_env, 'set_curriculum_level'):
+                eval_env.set_curriculum_level(env.curriculum_level)
+                print(f"✅ Evaluation environment curriculum level synced to training: {env.curriculum_level}")
+            else:
+                initial_curriculum_level = self.config["environment"].get("initial_curriculum_level", 0.05)
+                if hasattr(eval_env, 'set_curriculum_level'):
+                    eval_env.set_curriculum_level(initial_curriculum_level)
+                    print(f"✅ Evaluation environment curriculum level set to: {initial_curriculum_level}")
+                    
+            # CRUCIAL: Ensure evaluation uses same success criteria as training by sharing curriculum manager
+            print(f"✅ Evaluation environment using curriculum phase: {self.curriculum_manager.current_phase}")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not sync curriculum to evaluation environment: {e}")
         
         print(f"✅ Environment created with camera resolution: {self.config['environment']['camera_resolution']}")
         print(f"✅ Curriculum manager initialized")
@@ -325,7 +359,7 @@ class IntegratedTrainer:
             log_std_init=0.0,  # Initial policy variance
         )
         
-        # Conservative PPO settings
+        # Optimized PPO settings for 200-step episodes
         self.model = PPO(
             "MlpPolicy",
             self.train_env,
@@ -360,16 +394,189 @@ class IntegratedTrainer:
             def __init__(self, trainer, *args, **kwargs):
                 super().__init__(*args, **kwargs)
                 self.trainer = trainer
-                self.rgb_check_freq = 10000  # Check RGB every 10k steps
+                self.rgb_check_freq = 50000  # Check RGB every 50k steps (reduced frequency to avoid training disruption)
+                # Custom counters
+                self.total_successes = 0
+                self.total_grasps = 0
+                self.total_episodes = 0
+                self.phase_name_to_idx = {name: i for i, name in enumerate([
+                    "milestone_0_percent", "milestone_5_percent", "milestone_10_percent",
+                    "milestone_15_percent", "milestone_20_percent", "milestone_25_percent",
+                    "milestone_30_percent", "grasping", "manipulation", "mastery"
+                ])}
+                # New aggregation buffers
+                self.recent_min_dists = []
+                self.recent_approach_events = []
+                self.recent_contact_events = []
+                self.recent_vertical_signed_medians = []
+                self.recent_episode_successes = []  # Track individual episode success/failure
+                self.window = 100  # aggregation window
+                self._current_episode_min_planar = np.inf
+                self._current_episode_vertical_signed = []
+            
+            def _update_curriculum_only(self):
+                """Update curriculum manager without full logging - called every rollout"""
+                if not self.trainer.curriculum_manager:
+                    return
                 
+                # CRITICAL FIX: Use exact same calculation as detailed logging callback
+                recent_window = 50  # Always use 50 episodes for consistency across all metrics
+                if hasattr(self, 'recent_episode_successes') and self.recent_episode_successes:
+                    recent_success_rate = np.mean(self.recent_episode_successes[-recent_window:]) if len(self.recent_episode_successes) >= 1 else 0.0
+                else:
+                    recent_success_rate = 0.0  # No episodes recorded yet
+                
+                # Update curriculum manager
+                curriculum_result = self.trainer.curriculum_manager.update(recent_success_rate)
+                
+                # Log phase changes immediately
+                if curriculum_result.get('phase_changed', False):
+                    print(f"\n🎓 CURRICULUM ADVANCED: {curriculum_result['old_phase']} → {curriculum_result['new_phase']}")
+                    print(f"   Recent success rate: {recent_success_rate:.1%}, Duration: {curriculum_result['phase_duration_hours']:.1f}h")
+                    print(f"   Step: {self.n_calls}, Episodes: {self.total_episodes}")
+
+            def _log_custom_metrics(self):
+                # URGENT FIX: Update curriculum manager with recent success rate
+                overall_success_rate = self.total_successes / max(1, self.total_episodes)
+                
+                # CRITICAL FIX: Use exact same calculation as detailed logging callback
+                recent_window = 50  # Always use 50 episodes for consistency across all metrics
+                if hasattr(self, 'recent_episode_successes') and self.recent_episode_successes:
+                    # Use exact same calculation method as detailed_logging_callback.py:125-126
+                    recent_success_rate = np.mean(self.recent_episode_successes[-recent_window:]) if len(self.recent_episode_successes) >= 1 else 0.0
+                else:
+                    recent_success_rate = 0.0  # No episodes recorded yet
+                
+                if self.trainer.curriculum_manager:
+                    curriculum_result = self.trainer.curriculum_manager.update(recent_success_rate)
+                    if curriculum_result.get('phase_changed', False):
+                        print(f"\n🎓 CURRICULUM ADVANCED: {curriculum_result['old_phase']} → {curriculum_result['new_phase']}")
+                        print(f"   Recent success rate: {recent_success_rate:.1%}, Duration: {curriculum_result['phase_duration_hours']:.1f}h")
+                
+                phase = self.trainer.curriculum_manager.current_phase if self.trainer.curriculum_manager else "unknown"
+                phase_idx = self.phase_name_to_idx.get(phase, -1)
+                grasp_rate = self.total_grasps / max(1, self.total_episodes)
+                # Distance/contact metrics
+                if self.recent_min_dists:
+                    median_min_dist = float(np.median(self.recent_min_dists))
+                    p25_min_dist = float(np.percentile(self.recent_min_dists, 25))
+                    p75_min_dist = float(np.percentile(self.recent_min_dists, 75))
+                else:
+                    median_min_dist = p25_min_dist = p75_min_dist = np.nan
+                avg_approach_events = float(np.mean(self.recent_approach_events)) if self.recent_approach_events else 0.0
+                avg_contact_events = float(np.mean(self.recent_contact_events)) if self.recent_contact_events else 0.0
+                approach_episode_rate = float(np.mean([1.0 if x>0 else 0.0 for x in self.recent_approach_events])) if self.recent_approach_events else 0.0
+                contact_episode_rate = float(np.mean([1.0 if x>0 else 0.0 for x in self.recent_contact_events])) if self.recent_contact_events else 0.0
+                median_vertical_signed = float(np.median(self.recent_vertical_signed_medians)) if self.recent_vertical_signed_medians else np.nan
+                self.logger.record("custom/total_grasps", float(self.total_grasps))
+                self.logger.record("custom/total_successes", float(self.total_successes))
+                self.logger.record("custom/episodes", float(self.total_episodes))
+                self.logger.record("custom/grasp_rate_per_episode", float(grasp_rate))
+                # CRITICAL FIX: Log the same success rate that all other metrics use (recent 50-episode window)
+                self.logger.record("custom/success_rate_per_episode", float(recent_success_rate))
+                self.logger.record("custom/lifetime_success_rate", float(overall_success_rate))  # Keep lifetime for reference
+                self.logger.record("custom/curriculum_phase_idx", float(phase_idx))
+                self.logger.record("custom/curriculum_phase_name", phase)
+                # New logs
+                self.logger.record("distance/median_min_object_distance", median_min_dist)
+                self.logger.record("distance/p25_min_object_distance", p25_min_dist)
+                self.logger.record("distance/p75_min_object_distance", p75_min_dist)
+                self.logger.record("distance/approach_events_mean", avg_approach_events)
+                self.logger.record("distance/contact_events_mean", avg_contact_events)
+                self.logger.record("distance/approach_episode_rate", approach_episode_rate)
+                self.logger.record("distance/contact_episode_rate", contact_episode_rate)
+                self.logger.record("vertical/median_final_vertical_signed", median_vertical_signed)
+
             def _on_step(self) -> bool:
                 result = super()._on_step()
-                
-                # Periodic RGB validation
-                if self.n_calls % self.rgb_check_freq == 0:
-                    obs = self.trainer.train_env.reset()
-                    self.trainer._validate_rgb_rendering(obs[0], f"Step {self.n_calls}")
+                infos = self.locals.get("infos", [])
+                dones = self.locals.get("dones", [])
+                for i, info in enumerate(infos):
+                    if not isinstance(info, dict):
+                        continue
+                    # CRITICAL FIX: Only count grasps on episode termination (done=True)
+                    if dones[i]:  # Only count when episode ends
+                        grasp_events = info.get("grasp_events", 0)
+                        if grasp_events > 0:
+                            # DEBUG: Log grasp counting to detect phantom increments
+                            print(f"🔍 GRASP COUNT DEBUG: Episode {i} ENDED - adding {grasp_events} grasps (total was {self.total_grasps})")
+                            self.total_grasps += grasp_events  # Add all grasps from this episode
+                            print(f"🔍 GRASP COUNT DEBUG: Total grasps now {self.total_grasps}")
                     
+                    # Extract reward components for other metrics
+                    rc = info.get("reward_components", {})
+                    
+                    # Fallback extraction if planar_distance missing
+                    pd = info.get("planar_distance", None)
+                    if pd is None and isinstance(rc, dict):
+                        pd = rc.get("planar_dist", None)
+                    if pd is not None:
+                        if pd < self._current_episode_min_planar:
+                            self._current_episode_min_planar = pd
+                    vs = info.get("vertical_signed", None)
+                    if vs is None and isinstance(rc, dict):
+                        vs = rc.get("vertical_signed", None)
+                    if vs is not None:
+                        self._current_episode_vertical_signed.append(vs)
+                    # Debug: sample first few episodes if metrics absent
+                    if self.total_episodes < 5 and (pd is None or vs is None) and self.n_calls < 2000 and isinstance(rc, dict):
+                        if not hasattr(self, '_early_debug_printed'):
+                            print("[DEBUG] Missing per-step metrics. Sample reward_components keys:", list(rc.keys())[:10])
+                            self._early_debug_printed = True
+                    done_flag = False
+                    if isinstance(dones, (list, np.ndarray)) and i < len(dones):
+                        done_flag = bool(dones[i])
+                    if done_flag:
+                        self.total_episodes += 1
+                        episode_success = info.get("is_success", False)
+                        if episode_success:
+                            self.total_successes += 1
+                        
+                        # Track individual episode results for curriculum
+                        self.recent_episode_successes.append(1.0 if episode_success else 0.0)
+                        # Register with curriculum manager for gated advancement
+                        if self.trainer.curriculum_manager:
+                            try:
+                                self.trainer.curriculum_manager.register_episode_result(bool(episode_success))
+                            except Exception as e:
+                                pass
+                        # Keep only recent episodes (last 50)
+                        if len(self.recent_episode_successes) > 50:
+                            self.recent_episode_successes = self.recent_episode_successes[-50:]
+                        if np.isfinite(self._current_episode_min_planar):
+                            self.recent_min_dists.append(self._current_episode_min_planar)
+                        # Episode-level fallback for approach/contact counts
+                        ae = info.get("approach_events", rc.get("approach_events", 0) if isinstance(rc, dict) else 0)
+                        ce = info.get("contact_events", rc.get("contact_events", 0) if isinstance(rc, dict) else 0)
+                        self.recent_approach_events.append(ae)
+                        self.recent_contact_events.append(ce)
+                        if self._current_episode_vertical_signed:
+                            self.recent_vertical_signed_medians.append(float(np.median(self._current_episode_vertical_signed)))
+                        # Maintain windows
+                        if len(self.recent_min_dists) > self.window:
+                            self.recent_min_dists = self.recent_min_dists[-self.window:]
+                        if len(self.recent_approach_events) > self.window:
+                            self.recent_approach_events = self.recent_approach_events[-self.window:]
+                        if len(self.recent_contact_events) > self.window:
+                            self.recent_contact_events = self.recent_contact_events[-self.window:]
+                        if len(self.recent_vertical_signed_medians) > self.window:
+                            self.recent_vertical_signed_medians = self.recent_vertical_signed_medians[-self.window:]
+                        # Reset episode trackers
+                        self._current_episode_min_planar = np.inf
+                        self._current_episode_vertical_signed = []
+                # CRITICAL FIX: Don't reset environment during training for RGB validation
+                # This was causing training disruption at step 10k
+                if self.n_calls % self.rgb_check_freq == 0 and self.n_calls > 0:
+                    # Just validate current observation without resetting
+                    current_obs = self.locals.get('observations', None)
+                    if current_obs is not None and len(current_obs) > 0:
+                        self.trainer._validate_rgb_rendering(current_obs[0], f"Step {self.n_calls} (non-disruptive check)")
+                # CURRICULUM FIX: Update curriculum every rollout (512 steps) not just every log_freq (1600 steps)
+                if self.n_calls % 512 == 0:
+                    self._update_curriculum_only()
+                
+                if self.n_calls % self.log_freq == 0:
+                    self._log_custom_metrics()
                 return result
         
         detailed_logger = RGBMonitoringCallback(
@@ -388,9 +595,10 @@ class IntegratedTrainer:
         )
         callbacks.append(checkpoint_callback)
         
-        # Evaluation callback
-        eval_callback = EvalCallback(
+        # CRITICAL FIX: Use curriculum-aware evaluation callback that syncs before evaluations
+        eval_callback = CurriculumAwareEvalCallback(
             self.eval_env,
+            trainer=self,  # Pass reference for curriculum sync
             best_model_save_path=str(self.exp_dir / "best_model"),
             log_path=str(self.exp_dir / "eval"),
             eval_freq=self.config["evaluation"]["eval_freq"],
@@ -400,60 +608,100 @@ class IntegratedTrainer:
         )
         callbacks.append(eval_callback)
         
-        # Progressive callback
-        progressive_callback = ProgressiveTrainingCallback(
-            eval_env=self.eval_env,
-            eval_freq=self.config["evaluation"]["eval_freq"],
-            n_eval_episodes=self.config["evaluation"]["n_eval_episodes"],
-            curriculum_threshold=0.05,
-            randomization_schedule={
-                0: 0.0,
-                200_000: 0.1,
-                400_000: 0.3,
-                800_000: 0.5,
-            },
+        # FIXED: More lenient early stopping to avoid premature termination
+        early_stopping_callback = PerformanceEarlyStoppingCallback(
+            patience=10,  # FIXED: Allow 10 evaluations (100k steps) without improvement - was too aggressive at 5
+            min_delta=0.01,  # FIXED: 1% improvement threshold - was too strict at 2%
+            performance_window=15,  # FIXED: Average over 15 evaluations for more stability
+            degradation_threshold=0.10,  # FIXED: Stop only if 10% performance drop - was too sensitive at 5%
+            evaluation_freq=self.config["evaluation"]["eval_freq"],
+            verbose=1
         )
-        callbacks.append(progressive_callback)
+        # DISABLED: Comment out early stopping until evaluation metrics are fixed
+        # callbacks.append(early_stopping_callback)
+        
+        # Remove ProgressiveTrainingCallback to avoid duplicate curriculum logic
         
         return CallbackList(callbacks)
     
     def sync_vecnormalize_stats(self):
-        """Sync VecNormalize stats from training to evaluation environment"""
+        """Sync VecNormalize stats and curriculum state from training to evaluation environment"""
         if isinstance(self.train_env, VecNormalize) and isinstance(self.eval_env, VecNormalize):
             self.eval_env.obs_rms = self.train_env.obs_rms
             self.eval_env.ret_rms = self.train_env.ret_rms
             print("✅ VecNormalize stats synced from training to evaluation environment")
+        
+        # FIXED: Sync curriculum level to evaluation environment
+        try:
+            # Get current curriculum level from training environment
+            if hasattr(self.train_env, 'venv'):
+                # VecNormalize wrapped environment
+                training_base_env = self.train_env.venv.envs[0]
+            else:
+                # Direct access
+                training_base_env = self.train_env.envs[0]
+            
+            if hasattr(self.eval_env, 'venv'):
+                # VecNormalize wrapped environment
+                eval_base_env = self.eval_env.venv.envs[0]
+            else:
+                # Direct access
+                eval_base_env = self.eval_env.envs[0]
+            
+            # FIXED: Store curriculum state BEFORE evaluation, will apply AFTER reset
+            self.curriculum_state_to_sync = None
+            if hasattr(training_base_env, 'curriculum_manager'):
+                self.curriculum_state_to_sync = {
+                    'current_phase': training_base_env.curriculum_manager.current_phase,
+                    'curriculum_level': getattr(training_base_env, 'curriculum_level', 0.05),
+                    'phase_progress': training_base_env.curriculum_manager.phase_progress,
+                    'phase_episode_count': training_base_env.curriculum_manager.phase_episode_count
+                }
+                print(f"📋 Stored curriculum state for eval sync: {self.curriculum_state_to_sync['current_phase']} @ level {self.curriculum_state_to_sync['curriculum_level']:.3f}")
+            
+            # Will sync AFTER reset to prevent initialization override
+                
+        except Exception as e:
+            print(f"⚠️ Warning: Could not sync curriculum state to evaluation environment: {e}")
+            # Continue without failing - evaluation will use default settings
     
     def train(self):
         """Main training loop with RGB monitoring"""
         self.create_env()
         self.create_model()
         callbacks = self.create_callbacks()
-        
-        # Sync VecNormalize stats
-        self.sync_vecnormalize_stats()
-        
-        # Final RGB check before training
-        print("\n🔍 Final RGB validation before training...")
-        obs = self.train_env.reset()
-        self._validate_rgb_rendering(obs[0], "Pre-training final check")
-        
-        # Train with fixed hyperparameters
-        print(f"\n🏃 Training for {self.config['training']['total_timesteps']:,} timesteps...")
-        
-        # Enhanced training monitoring
-        start_time = time.time()
-        
+        # Track early grasp successes to toggle domain randomization
+        grasp_success_counter = 0
+        domain_randomization_enabled = False
         try:
-            self.model.learn(
-                total_timesteps=self.config["training"]["total_timesteps"],
-                callback=callbacks,
-                log_interval=self.config["logging"]["log_interval"],
-                progress_bar=True,
-            )
+            start_time = time.time()
+            while self.model.num_timesteps < self.config["training"]["total_timesteps"]:
+                self.model.learn(total_timesteps=min(50_000, self.config["training"]["total_timesteps"] - self.model.num_timesteps),
+                                  callback=callbacks,
+                                  reset_num_timesteps=False,
+                                  progress_bar=True,  # re-enable progress bar
+                                  log_interval=self.config["logging"]["log_interval"])
+                
+                # Sync normalization and curriculum to align training/evaluation behavior
+                self.sync_vecnormalize_stats()
+                
+                # After each chunk, check recent monitor file for grasp events
+                if self.curriculum_manager and self.curriculum_manager.collision_history:
+                    recent = self.curriculum_manager.collision_history[-20:]
+                    for ep in recent:
+                        if isinstance(ep, dict) and (ep.get("successful_grasp") or ep.get("object_grasped")):
+                            grasp_success_counter += 1
+                if (not domain_randomization_enabled) and grasp_success_counter >= 10:
+                    print("🌈 Enabling domain randomization after 10 grasp successes")
+                    # Enable in underlying env instance(s)
+                    base_env = self.train_env.envs[0].env
+                    if hasattr(base_env, 'use_domain_randomization'):
+                        base_env.use_domain_randomization = True
+                        if hasattr(base_env, 'domain_randomizer'):
+                            base_env.domain_randomizer.set_curriculum_level(base_env.curriculum_level)
+                    domain_randomization_enabled = True
         except KeyboardInterrupt:
             print("\n⚠️  Training interrupted by user")
-            
         # Training completion summary
         end_time = time.time()
         training_duration = end_time - start_time
@@ -540,7 +788,7 @@ class IntegratedTrainer:
                 if self.visual_training:
                     time.sleep(0.01)
                 
-            success = info.get('task_completed', False)
+            success = info.get('is_success', False)
             if success:
                 successes += 1
                 
@@ -667,12 +915,34 @@ class IntegratedTrainer:
             if hasattr(self.eval_env, 'envs') and len(self.eval_env.envs) > 0:
                 env = self.eval_env.envs[0]
                 
-                # Reset and get initial observation
-                obs = self.eval_env.reset()
+                # CRITICAL FIX: Don't reset eval environment during training - this interferes!
+                # Only get current state without disrupting episodes
+                # obs = self.eval_env.reset()  # REMOVED: This was causing episode reset interference
+                obs = None  # Will skip logging if no current observation available
                 
-                # Log what we see
-                self._log_object_perception(env, obs[0], 0, "eval")
-                self._validate_rgb_rendering(obs[0], "Evaluation environment")
+                # FIXED: Apply curriculum state AFTER reset to prevent initialization override
+                if hasattr(self, 'curriculum_state_to_sync') and self.curriculum_state_to_sync:
+                    try:
+                        # Apply to the base environment after reset
+                        if hasattr(env, 'curriculum_manager'):
+                            env.curriculum_manager.current_phase = self.curriculum_state_to_sync['current_phase']
+                            env.curriculum_manager.phase_progress = self.curriculum_state_to_sync['phase_progress']
+                            env.curriculum_manager.phase_episode_count = self.curriculum_state_to_sync['phase_episode_count']
+                            
+                        # Apply curriculum level
+                        if hasattr(env, 'set_curriculum_level'):
+                            env.set_curriculum_level(self.curriculum_state_to_sync['curriculum_level'])
+                            
+                        print(f"✅ Curriculum state applied AFTER reset: {self.curriculum_state_to_sync['current_phase']} @ level {self.curriculum_state_to_sync['curriculum_level']:.3f}")
+                    except Exception as e:
+                        print(f"⚠️ Failed to apply curriculum state after reset: {e}")
+                
+                # CRITICAL FIX: Only log if we have observation without causing interference
+                if obs is not None:
+                    self._log_object_perception(env, obs[0], 0, "eval")
+                    self._validate_rgb_rendering(obs[0], "Evaluation environment")
+                else:
+                    print("   Skipping eval perception logging to avoid training interference")
                 
         except Exception as e:
             print(f"   ⚠️ Evaluation perception logging failed: {e}")
@@ -765,119 +1035,58 @@ class IntegratedTrainer:
             print(f"   ⚠️ Approach analysis failed: {e}")
     
     def predict_breakthrough_timeline(self, current_step: int):
-        """Predict when first successes might emerge based on actual curriculum structure"""
+        """Predict breakthrough milestones for the simplified 4-phase curriculum"""
         try:
             print(f"\n⏱️ Curriculum Timeline Prediction:")
-            
-            # Actual curriculum phase durations from curriculum_manager.py (5 phases total)
-            phase_1_approach = 5_000_000     # Phase 1: approach_learning
-            phase_2_contact = 4_000_000      # Phase 2: contact_refinement  
-            phase_3_grasping = 8_000_000     # Phase 3: grasping
-            phase_4_manipulation = 6_000_000 # Phase 4: manipulation
-            phase_5_mastery = 4_000_000      # Phase 5: mastery
-            
-            # Cumulative phase boundaries
-            phase_2_start = phase_1_approach
-            phase_3_start = phase_1_approach + phase_2_contact
-            phase_4_start = phase_3_start + phase_3_grasping
-            phase_5_start = phase_4_start + phase_4_manipulation
-            total_curriculum = phase_5_start + phase_5_mastery  # 27M total
-            
-            # Determine current phase and progress
-            if current_step < phase_1_approach:
-                current_phase_num = 1
-                phase_progress = (current_step / phase_1_approach) * 100
-                remaining_in_phase = phase_1_approach - current_step
-                phase_name = "Approach Learning"
-                phase_focus = "Safe approach and gripper contact"
-                success_threshold = "10%"
-            elif current_step < phase_2_start + phase_2_contact:
-                current_phase_num = 2
-                phase_progress = ((current_step - phase_2_start) / phase_2_contact) * 100
-                remaining_in_phase = phase_2_start + phase_2_contact - current_step
-                phase_name = "Contact Refinement"
-                phase_focus = "Precise gripper positioning"
-                success_threshold = "30%"
-            elif current_step < phase_3_start + phase_3_grasping:
-                current_phase_num = 3
-                phase_progress = ((current_step - phase_3_start) / phase_3_grasping) * 100
-                remaining_in_phase = phase_3_start + phase_3_grasping - current_step
-                phase_name = "Grasping"
-                phase_focus = "Successful object grasping"
-                success_threshold = "50%"
-            elif current_step < phase_4_start + phase_4_manipulation:
-                current_phase_num = 4
-                phase_progress = ((current_step - phase_4_start) / phase_4_manipulation) * 100
-                remaining_in_phase = phase_4_start + phase_4_manipulation - current_step
-                phase_name = "Manipulation"
-                phase_focus = "Full pick and place"
-                success_threshold = "70%"
-            elif current_step < phase_5_start + phase_5_mastery:
-                current_phase_num = 5
-                phase_progress = ((current_step - phase_5_start) / phase_5_mastery) * 100
-                remaining_in_phase = phase_5_start + phase_5_mastery - current_step
-                phase_name = "Mastery"
-                phase_focus = "Collision-free mastery"
-                success_threshold = "85%"
+            # Phase definitions (must match CurriculumManager)
+            phases = [
+                ("approach_learning", 80_000, 0.02, "Reach & consistent contact"),
+                ("grasping", 160_000, 0.15, "Close, lift briefly"),
+                ("manipulation", 240_000, 0.35, "Stable lift & move toward target"),
+                ("mastery", 320_000, 0.60, "Reliable place & efficiency"),
+            ]
+            cumulative = 0
+            current_phase_name = "complete"
+            phase_progress = 1.0
+            remaining = 0
+            for name, steps, thresh, desc in phases:
+                if current_step < cumulative + steps:
+                    current_phase_name = name
+                    phase_progress = (current_step - cumulative) / steps
+                    remaining = (cumulative + steps) - current_step
+                    break
+                cumulative += steps
+            total_curriculum = sum(p[1] for p in phases)
+            print(f"   Step: {current_step:,} / {total_curriculum:,}")
+            if current_phase_name != "complete":
+                print(f"   Phase: {current_phase_name} ({phase_progress*100:.1f}% complete, {remaining:,} steps remaining)")
             else:
-                current_phase_num = "Complete"
-                phase_progress = 100
-                remaining_in_phase = 0
-                phase_name = "Curriculum Complete"
-                phase_focus = "All phases mastered"
-                success_threshold = "N/A"
-            
-            print(f"   📍 Current Curriculum Progress:")
-            print(f"       Step: {current_step:,} / {total_curriculum:,} total")
-            print(f"       Phase: {current_phase_num}/5 - {phase_name}")
-            print(f"       Phase Progress: {min(100, phase_progress):.1f}%")
-            print(f"       Phase Focus: {phase_focus}")
-            print(f"       Success Threshold: {success_threshold}")
-            
-            if current_phase_num != "Complete":
-                print(f"       Remaining in Phase: {remaining_in_phase:,} steps")
-                
-                print(f"\n   🎯 Complete Curriculum Timeline:")
-                print(f"       Phase 1 (0-5M): Approach Learning")
-                print(f"       Phase 2 (5M-9M): Contact Refinement") 
-                print(f"       Phase 3 (9M-17M): Grasping")
-                print(f"       Phase 4 (17M-23M): Manipulation")
-                print(f"       Phase 5 (23M-27M): Mastery")
-            
-            # Training health indicators based on actual phase
-            current_phase_str = phase_name if current_phase_num != "Complete" else "Complete"
-            print(f"\n   💪 Training Health:")
-            if current_phase_num == 1:
-                print(f"       ✅ Currently learning: Basic approach strategies")
-                print(f"       ✅ Phase 1 rewards: Gentle contact & exploration")
-                print(f"       ✅ Zero termination on collisions (learning mode)")
-                print(f"       ✅ Curriculum will auto-advance at 10% success")
-            elif current_phase_num == 2:
-                print(f"       ✅ Currently learning: Contact refinement")
-                print(f"       ✅ Phase 2 rewards: Precise gripper positioning")
-                print(f"       ✅ Success threshold: 30% to advance")
-            elif current_phase_num == 3:
-                print(f"       ✅ Currently learning: Grasping techniques")
-                print(f"       ✅ Phase 3 rewards: Successful object grasping")
-                print(f"       ✅ Success threshold: 50% to advance")
-            elif current_phase_num == 4:
-                print(f"       ✅ Currently learning: Full manipulation")
-                print(f"       ✅ Phase 4 rewards: Complete pick-and-place")
-                print(f"       ✅ Success threshold: 70% to advance")
-            elif current_phase_num == 5:
-                print(f"       ✅ Currently learning: Mastery refinement")
-                print(f"       ✅ Phase 5 rewards: Collision-free execution")
-                print(f"       ✅ Success threshold: 85% for completion")
-            else:
-                print(f"       ✅ Training complete: All phases mastered")
-            
-            # Realistic expectations
-            print(f"\n   💡 Realistic Expectations:")
-            print(f"       🎯 Object contacts: Throughout Phase 1 (0-5M)")
-            print(f"       🤏 First grasps: Phase 3 (9M-17M steps)")
-            print(f"       🏆 Task completion: Phase 4 (17M-23M steps)")
-            print(f"       🎖️ Mastery: Phase 5 (23M-27M steps)")
-            
+                print("   Phase: complete")
+            # Milestone expectations (heuristic ranges)
+            print("\n   🎯 Expected Milestones (typical ranges):")
+            print("   - First consistent object approaches: 5k - 20k steps")
+            print("   - First soft contacts (distance < 6cm): 10k - 30k steps")
+            print("   - First accidental grasps (gripper closes near object): 90k - 140k steps")
+            print("   - First stable grasp & lift (>5cm): 130k - 190k steps")
+            print("   - First partial carry toward target: 220k - 300k steps")
+            print("   - First successful placement (within 8cm radius): 260k - 360k steps")
+            print("   - Consistent (>=30%) placements: 340k - 450k steps")
+            print("   - Crossing 50% success: 500k - 650k steps (early mastery phase)")
+            print("   - Approaching 60%+ stable success: 650k - 780k steps")
+            # Phase advice
+            if current_phase_name == "approach_learning":
+                print("\n   🔍 Focus now: maximize progress reward (distance reduction). Look for rising 'progress' component and sporadic contact bonuses.")
+            elif current_phase_name == "grasping":
+                print("\n   🔍 Focus now: convert contacts into grasps. Expect grasp bonus frequency to start >0 after ~20% of this phase elapsed.")
+            elif current_phase_name == "manipulation":
+                print("\n   🔍 Focus now: stabilize post-grasp lift heights and begin lateral motion toward target.")
+            elif current_phase_name == "mastery":
+                print("\n   🔍 Focus now: reduce time & smoothness penalties; stabilize placement orientation.")
+            # Early warning heuristics
+            if current_step > 40_000 and current_phase_name == "approach_learning" and self.model.num_timesteps:  # safeguard
+                print("\n   ⚠️ If no contact bonuses by 40k steps: consider increasing approach_bonus or reducing progress scale from 8.0 → 6.0.")
+            if current_step > 140_000 and current_phase_name == "grasping":
+                print("   ⚠️ If zero grasp bonuses by 140k steps: check gripper closing threshold & object spawn height.")
         except Exception as e:
             print(f"   ⚠️ Prediction failed: {e}")
 
@@ -892,19 +1101,29 @@ def main():
                        help="Enable visual training mode")
     parser.add_argument("--test", type=str, help="Path to model to test")
     parser.add_argument("--episodes", type=int, default=5, help="Test episodes")
+    parser.add_argument("--verify", action="store_true", 
+                       help="Run training verification test")
     
     args = parser.parse_args()
 
     print("🤖 UR5e Pick-Place Training System")
     print("🔧 Fixed for RGB rendering on Ubuntu")
 
-    trainer = IntegratedTrainer(args.config, visual_training=args.visual)
-
-    if args.test:
+    if args.verify:
+        # Verification mode
+        print("\n💡 For verification testing, please run:")
+        print("   python simple_test.py")
+        print("   (Basic environment test)")
+        print("\n   python test_training_setup.py")
+        print("   (Full training verification)")
+        return
+    elif args.test:
         # Test mode
+        trainer = IntegratedTrainer(args.config, visual_training=args.visual)
         trainer.test_model(args.test, args.episodes)
     else:
         # Training mode
+        trainer = IntegratedTrainer(args.config, visual_training=args.visual)
         trainer.train()
 
 if __name__ == "__main__":
