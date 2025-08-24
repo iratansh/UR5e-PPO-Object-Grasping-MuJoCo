@@ -1,0 +1,25 @@
+environment:
+  camera_resolution: 32
+  headless: true
+  initial_curriculum_level: 0.05
+  max_episode_steps: 50
+  render_mode: null
+  use_domain_randomization: false
+logging:
+  eval_freq: null
+  log_dir: /tmp/mini_test_logs
+  print_freq: 200
+  save_freq: null
+model:
+  model_name: mini_test
+  save_dir: /tmp/mini_test_model
+training:
+  batch_size: 32
+  learning_rate: 0.0003
+  n_envs: 1
+  n_steps: 64
+  policy_kwargs:
+    net_arch:
+    - 32
+    - 32
+  total_timesteps: 1000

@@ -2,7 +2,8 @@
 """
 Real Robot Deployment Script for UR5e with Robotiq 2F-85
 Includes safety features and real-time monitoring
-NOTE: THIS SCRIPT IS NOT FULLY IMPLEMENTED
+NOTE: THIS SCRIPT IS NOT FULLY IMPLEMENTED - I LEAVE IMPLEMENTATION UPTO YOU
+NOTE: The purpose of the study is mostly on implementing PPO via simulation WHICH CAN SUPPORT REAL ROBOT DEPLOYMENT VIA EXTENSIVE DOMAIN-RANDOMIZATION TECHNIQUES, as my lab doesn't have access to the Robotiq 2F-85 gripper.
 """
 
 import numpy as np

@@ -1,0 +1,148 @@
+# RTX 4060 Fixed Configuration
+# Hardware: RTX 4060 8GB, 16GB RAM, Ryzen 5
+
+environment:
+  n_envs: 4  # 4 parallel environments for RTX 4060
+  camera_resolution: 84 # Increased for better visual fidelity - if better hardware is available increase to 128 - to better mimick the Realsense D435i specs
+  frame_skip: 5
+  xml_file: "custom_scene.xml"
+  control_mode: "joint"
+  use_stuck_detection: true
+  use_domain_randomization: false  # Start with no randomization, enable progressively via curriculum
+  initial_curriculum_level: 0.05  # Start with milestone_0 (NEAR SPAWN)
+  render_mode: null
+  headless: false
+
+training:
+  total_timesteps: 27_000_000
+  
+  learning_rate: 0.0001  # Reduced from 0.0003 to prevent aggressive updates 
+  n_steps: 2048  
+  batch_size: 128  
+  
+  n_epochs: 3  # Reduced from 4 to prevent over-optimization  
+  gamma: 0.995  # Increased for longer-term planning
+  gae_lambda: 0.95
+  
+  clip_range: 0.15  # Much smaller range to prevent policy destruction
+  clip_range_vf: 0.1 
+  
+  normalize_advantage: true
+  
+  ent_coef: 0.01  # Much lower to prioritize exploitation over exploration
+  vf_coef: 0.5 
+
+  max_grad_norm: 0.3  # Tighter clipping to prevent large updates 
+
+  target_kl: 0.008  # Very conservative to prevent policy divergence  
+  
+  use_sde: false  # Disable SDE to reduce policy noise
+  sde_sample_freq: 4
+  
+  # Mixed precision disabled for stability
+  use_mixed_precision: false
+  
+  device: "cuda"
+  num_threads: 4
+  detailed_log_freq: 2048
+
+evaluation:
+  eval_freq: 25_600  # Every ~6k steps per env
+  n_eval_episodes: 10  # Increased from 5 to get more reliable statistics
+  deterministic: false  # Use stochastic policy to match training behavior
+
+logging:
+  save_freq: 51_200
+  checkpoint_keep: 10
+  log_interval: 5
+  reset_num_timesteps: false
+  tb_log_name: "ur5e_fixed"
+
+curriculum:
+  enable: true
+  success_threshold: 0.20  # Keep 20% threshold as requested
+  phases:
+    - name: "approach"
+      description: "Learn safe approaching and distance reduction"
+      timesteps: 1_000_000
+      focus: "distance_reduction_without_collision"
+    - name: "contact"
+      description: "Learn gentle contact and basic manipulation"
+      timesteps: 1_500_000
+      focus: "gripper_object_contact"
+    - name: "grasp"
+      description: "Learn reliable grasping"
+      timesteps: 1_500_000
+      focus: "object_lifting"
+    - name: "manipulate"
+      description: "Complete pick and place tasks"
+      timesteps: 1_000_000
+      focus: "task_completion"
+
+reward_structure:
+  distance_reward_scale: 1.5  # Increased to encourage approach learning
+  approach_bonus: 0.3  # Increased from 0.1 to better reward close approaches
+  contact_bonus: 1.0  # Increased from 0.5 to strongly reward contact
+  grasp_bonus: 3.0  # Increased from 2.0 to strongly reward grasping
+  lift_bonus: 2.0  # Increased from 1.0
+  place_bonus: 5.0
+  success_bonus: 10.0
+  time_penalty: -0.0005  # Reduced penalty to allow more exploration time
+  energy_penalty: -0.00005  # Reduced penalty to allow more movement
+  velocity_penalty_threshold: 1.2  # Increased threshold for faster movements
+  velocity_penalty_scale: -0.05  # Reduced penalty
+  physics_violation_penalty: -1.0
+  stuck_penalty: -0.3  # Reduced penalty to be less punitive during learning
+  reward_clip_min: -20.0
+  reward_clip_max: 20.0
+
+action_limits:
+  max_joint_velocity: 0.2 
+  max_action_magnitude: 0.05  
+  action_scale: 0.01 
+  action_smoothing_factor: 0.5  # More smoothing (was 0.3)
+  max_consecutive_physics_errors: 5  # More tolerance
+
+physics:
+  timestep: 0.002
+  iterations: 50
+  solver: "Newton"
+  jacobian: "sparse"
+  tolerance: 1e-10
+  joint_damping: 1.0
+  joint_armature: 0.01
+  joint_frictionloss: 0.2
+  contact_solimp: [0.9, 0.95, 0.001]
+  contact_solref: [0.02, 1]
+  contact_margin: 0.001
+
+camera:
+  realsense_rgb_fov_h: 69.0
+  realsense_rgb_fov_v: 42.0
+  realsense_depth_fov_h: 87.0
+  realsense_depth_fov_v: 58.0
+  min_depth: 0.28
+  max_depth: 3.0
+
+safety:
+  enable_physics_checks: true
+  enable_workspace_bounds: true
+  enable_joint_limits: true
+  enable_velocity_limits: true
+  terminate_on_physics_error: true
+
+memory_optimization:
+  pytorch_cuda_alloc_conf:
+    expandable_segments: true
+    max_split_size_mb: 128
+    garbage_collection_threshold: 0.7
+  
+  buffer_device: "cuda"  # Keep on GPU for 4 envs
+  enable_memory_profiler: false
+  memory_limit_gb: 7.0
+
+expected_timeline:
+  first_contacts: "100k-500k steps"
+  first_grasps: "3M-6M steps"
+  50_percent_success: "12M-18M steps"
+  70_percent_success: "20M-25M steps"
