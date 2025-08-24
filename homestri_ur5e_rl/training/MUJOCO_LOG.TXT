@@ -157,3 +157,9 @@ WARNING: OpenGL error 0x506 in or before mjr_makeContext
 Fri Aug 22 17:55:37 2025
 WARNING: OpenGL error 0x506 in or before mjr_makeContext
 
+Fri Aug 22 18:07:41 2025
+WARNING: OpenGL error 0x506 in or before mjr_makeContext
+
+Sat Aug 23 20:32:13 2025
+WARNING: OpenGL error 0x506 in or before mjr_makeContext
+

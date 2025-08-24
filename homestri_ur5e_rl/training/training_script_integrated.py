@@ -260,6 +260,12 @@ class IntegratedTrainer:
         # CRITICAL FIX: Create curriculum manager with reset callback
         def reset_training_metrics():
             """Reset training metrics when curriculum phase changes"""
+            # CRITICAL FIX: Initialize attributes if they don't exist
+            if not hasattr(self, 'total_grasps'):
+                self.total_grasps = 0
+            if not hasattr(self, 'total_successes'):
+                self.total_successes = 0
+                
             print(f"   🔄 Resetting training metrics: grasps={self.total_grasps} → 0, successes={self.total_successes} → 0")
             self.total_grasps = 0
             self.total_successes = 0
