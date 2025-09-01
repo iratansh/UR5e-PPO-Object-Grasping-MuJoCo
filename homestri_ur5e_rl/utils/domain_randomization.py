@@ -31,10 +31,14 @@ class DomainRandomizer:
         self.randomize_camera = randomize_camera
         self.randomize_dynamics = randomize_dynamics
         self.randomize_geometry = randomize_geometry
-        
+        # Allow independently gating friction randomization separate from visual materials
+        self.randomize_friction = True
+        # Store last applied milestone settings
+        self._milestone_params = {}
+
         # Store original values for reset
         self._store_original_values()
-        
+
         # Define randomization ranges based on sim-to-real literature
         self.randomization_ranges = {
             # Dynamics
@@ -66,10 +70,51 @@ class DomainRandomizer:
         }
         
         print(f" Domain randomizer initialized")
-        print(f"   Joint randomization: {randomize_joints}")
-        print(f"   Material randomization: {randomize_materials}")
-        print(f"   Lighting randomization: {randomize_lighting}")
-        print(f"   Camera randomization: {randomize_camera}")
+        print(f"   Joint randomization: {self.randomize_joints}")
+        print(f"   Material randomization: {self.randomize_materials}")
+        print(f"   Lighting randomization: {self.randomize_lighting}")
+        print(f"   Camera randomization: {self.randomize_camera}")
+
+    def set_milestone_parameters(
+        self,
+        mass_range: tuple = (50, 50),
+        color_randomization: bool = False,
+        lighting_randomization: bool = False,
+        friction_randomization: bool = False,
+        objects: Optional[List[str]] = None,
+    ) -> None:
+        """Apply per-milestone domain randomization settings.
+        mass_range is expected in grams; convert to kg. Other flags gate existing
+        randomizations without requiring re-instantiation.
+        """
+        # Convert grams to kilograms for internal MuJoCo values
+        try:
+            g_min, g_max = mass_range
+            kg_min = max(0.001, float(g_min) / 1000.0)
+            kg_max = max(kg_min, float(g_max) / 1000.0)
+        except Exception:
+            # Fallback to a conservative default if malformed
+            kg_min, kg_max = 0.05, 0.05
+        # Update ranges for object mass to sample absolute masses, not multipliers
+        self.randomization_ranges['object_mass'] = (kg_min, kg_max)
+        # Gate visual and physics randomizations based on milestone
+        self.randomize_materials = bool(color_randomization)
+        self.randomize_lighting = bool(lighting_randomization)
+        self.randomize_friction = bool(friction_randomization)
+        # Store params for reference
+        self._milestone_params = {
+            'mass_range_kg': (kg_min, kg_max),
+            'color_randomization': self.randomize_materials,
+            'lighting_randomization': self.randomize_lighting,
+            'friction_randomization': self.randomize_friction,
+            'objects': objects or [],
+        }
+        print(
+            f"📝 Domain randomizer milestone params: mass={kg_min:.3f}-{kg_max:.3f}kg, "
+            f"color={'ON' if self.randomize_materials else 'OFF'}, "
+            f"lighting={'ON' if self.randomize_lighting else 'OFF'}, "
+            f"friction={'ON' if self.randomize_friction else 'OFF'}"
+        )
         
     def _store_original_values(self):
         """Store original model values for reset"""
@@ -137,9 +182,9 @@ class DomainRandomizer:
             try:
                 body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, body_name)
                 if body_id >= 0:
-                    # Mass randomization
-                    mass_mult = np.random.uniform(*self.randomization_ranges['object_mass'])
-                    self.model.body_mass[body_id] = mass_mult
+                    # Mass randomization (absolute mass in kg)
+                    mass_val = np.random.uniform(*self.randomization_ranges['object_mass'])
+                    self.model.body_mass[body_id] = mass_val
                     
             except:
                 continue
@@ -147,27 +192,29 @@ class DomainRandomizer:
         # Object friction
         object_geom_names = ["cube", "sphere", "cylinder"]
         
-        for geom_name in object_geom_names:
-            try:
-                geom_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)
-                if geom_id >= 0:
-                    # Friction randomization
-                    friction_mult = np.random.uniform(*self.randomization_ranges['object_friction'])
-                    self.model.geom_friction[geom_id, 0] = 0.7 * friction_mult  # Sliding friction
-                    self.model.geom_friction[geom_id, 1] = 0.005 * friction_mult  # Torsional friction
-                    self.model.geom_friction[geom_id, 2] = 0.0001 * friction_mult  # Rolling friction
-                    
-            except:
-                continue
+        if self.randomize_friction:
+            for geom_name in object_geom_names:
+                try:
+                    geom_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_name)
+                    if geom_id >= 0:
+                        # Friction randomization
+                        friction_mult = np.random.uniform(*self.randomization_ranges['object_friction'])
+                        self.model.geom_friction[geom_id, 0] = 0.7 * friction_mult  # Sliding friction
+                        self.model.geom_friction[geom_id, 1] = 0.005 * friction_mult  # Torsional friction
+                        self.model.geom_friction[geom_id, 2] = 0.0001 * friction_mult  # Rolling friction
+                        
+                except:
+                    continue
                 
         # Table friction
-        try:
-            table_geom_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "table_surface")
-            if table_geom_id >= 0:
-                table_friction_mult = np.random.uniform(*self.randomization_ranges['table_friction'])
-                self.model.geom_friction[table_geom_id, 0] = 1.0 * table_friction_mult
-        except:
-            pass
+        if self.randomize_friction:
+            try:
+                table_geom_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "table_surface")
+                if table_geom_id >= 0:
+                    table_friction_mult = np.random.uniform(*self.randomization_ranges['table_friction'])
+                    self.model.geom_friction[table_geom_id, 0] = 1.0 * table_friction_mult
+            except:
+                pass
             
     def _randomize_lighting(self):
         """Randomize lighting for visual variation"""

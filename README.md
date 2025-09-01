@@ -1,209 +1,125 @@
-# UR5e PPO Object Grasping with Homestri Integration
+# UR5e PPO Object Grasping (Homestri‑based)
 
-A sophisticated reinforcement learning environment for training a UR5e robotic arm to perform pick-and-place tasks, built on top of the [Homestri UR5e RL framework](https://github.com/ian-chuang/homestri-ur5e-rl) with significant enhancements for sim-to-real transfer and Apple Silicon optimization. I adapted the the training for Apple Silicon as I use a Macbook Pro M2 as my main system, however the repo is intended for training a model using an Ubuntu system with an RTX GPU.
+End-to-end RL training for a UR5e pick‑and‑place task with RGB‑D perception, curriculum learning, and domain randomization. Runs on Ubuntu (CUDA) and macOS (MPS) with Stable‑Baselines3 PPO and MuJoCo.
 
-## Project Overview
+## What’s here
 
-This project extends the original Homestri UR5e RL environment with advanced features for robust object manipulation training using Proximal Policy Optimization (PPO). 
+- Enhanced UR5e environment with RealSense‑style RGB‑D observation
+- PPO training pipeline with custom CNN feature extractor (SimToRealCNN)
+- Progressive curriculum with milestone phases and eval sync
+- Domain randomization with per‑milestone gating (mass, color, lighting, friction)
+- RGB rendering validation and detailed metrics via callbacks
+- Works on macOS (MPS) and Ubuntu (CUDA) with auto MuJoCo GL setup
 
-### Current Status
-
-- **Training Performance**: Successfully reached 330k+ timesteps with stable training on M2 Pro
-- **Physics Stability**: Perfect collision-free operation (0% collision rate)
-- **Reward Convergence**: Stable rewards in 65-80 range during successful training runs
-- **Object Spawning**: Fixed critical bugs in domain randomization and object physics
-- **Camera Integration**: Comprehensive CNN perception logging and object visibility tracking
-- **Apple Silicon**: Optimized for M1/M2 MacBook Pro
-
-### Key Features
-
-- **Enhanced UR5e Environment**: Advanced pick-place environment with RealSense D435i camera simulation
-- **PPO Training Pipeline**: Optimized reinforcement learning with Stable-Baselines3
-- **Camera-Aware Training**: Intel RealSense D435i camera integration with comprehensive CNN perception logging
-- **Domain Randomization**: Physics and visual randomization with fixed object spawning logic
-- **Curriculum Learning**: Progressive difficulty scaling with curriculum management
-- **Apple Silicon Optimization**: Native M1/M2 MacBook Pro support
-- **Advanced Safety**: Stuck detection, physics stability, and object drop recovery
-- **Real-time Analytics**: Comprehensive logging, TensorBoard integration, and policy analysis
-- **Physics Debugging**: Fixed object size randomization and physics stability issues
-- **Object Perception**: Deep CNN analysis with object-camera correlation tracking
-
-## Architecture & Technologies
-
-### Core Technologies
-
-- **Physics Simulation**: [MuJoCo](https://mujoco.org/) for high-fidelity robot simulation
-- **RL Framework**: [Stable-Baselines3](https://stable-baselines3.readthedocs.io/) with PPO algorithm
-- **Environment Interface**: [Gymnasium](https://gymnasium.farama.org/) for standardized RL environments
-- **Deep Learning**: [PyTorch](https://pytorch.org/) with Apple Silicon MPS support and Nvidia Cuda Su
-- **Computer Vision**: Custom CNN feature extractors for visual perception
-- **Robot Control**: Operational space controllers from Homestri framework
-
-### Environment Components
+## Repo structure (current)
 
 ```
-homestri_ur5e_rl/
-├── envs/
-│   ├── UR5ePickPlaceEnvEnhanced.py    # Main enhanced environment 
-│   ├── base_robot/                     # Base robot components from Homestri
-│   │   ├── base_robot_env.py          # Core robot environment
-│   │   └── custom_robot_env.py        # Custom robot implementations
-│   └── assets/
-│       └── base_robot/
-│           └── custom_scene.xml       # Enhanced MuJoCo scene with optimized physics
-├── training/
-│   ├── training_script_integrated.py  # Main PPO training script with object logging
-│   ├── sim_to_real_cnn.py             # CNN feature extractor for visual perception
-│   ├── progressive_callback.py        # Curriculum learning callbacks
-│   ├── curriculum_manager.py          # Advanced curriculum management
-│   ├── config_m2_optimized.yaml       # Optimized config for Apple Silicon
-│   └── config_rtx4060_optimized.yaml  # Optimized config for Nvidia RTX 4060 GPU
-├── utils/
-│   ├── realsense.py                   # RealSense D435i camera simulation
-│   ├── domain_randomization.py       # Physics randomization 
-│   ├── ur5e_stuck_detection_mujoco.py # Advanced safety mechanisms
-│   ├── detailed_logging_callback.py  # Comprehensive training analytics
-│   └── deployment_utils.py           # Real robot deployment utilities
-├── deployment/
-│   └── real_robot_deployment.py      # Real UR5e deployment pipeline
-├── experiments/                       # Training experiment results 
-│   └── ur5e_pickplace_*/             # Individual experiment directories
-└── configs/                          # Training configurations
+.
+├── environment.yml
+├── setup.py
+├── verify_setup.py
+├── experiments/
+│   └── ur5e_pickplace_*/
+│       ├── config.yaml
+│       ├── logs/
+│       ├── tensorboard/
+│       ├── monitor.csv (optional)
+│       ├── vec_normalize.pkl (when saved)
+│       └── final_model.zip (when saved)
+└── homestri_ur5e_rl/
+		├── envs/
+		│   ├── UR5ePickPlaceEnvEnhanced.py
+		│   ├── assets/
+		│   └── mujoco/
+		├── training/
+		│   ├── training_script_integrated.py
+		│   ├── sim_to_real_cnn.py
+		│   ├── curriculum_manager.py
+		│   ├── progressive_callback.py
+		│   ├── curriculum_aware_eval_callback.py
+		│   ├── performance_early_stopping_callback.py
+		│   ├── config_m2_optimized.yaml
+		│   └── config_rtx4060_optimized.yaml
+		└── utils/
+				├── domain_randomization.py
+				├── detailed_logging_callback.py
+				├── realsense.py
+				└── deployment_utils.py
 ```
 
-##  Getting Started
+## Key components
 
-### Prerequisites
+### Training script
+- File: `training/training_script_integrated.py`
+- Sets device: CUDA > MPS > CPU
+- Configures MuJoCo GL automatically:
+	- Linux with display: `MUJOCO_GL=glfw`
+	- Linux headless: `MUJOCO_GL=egl`
+	- macOS: `MUJOCO_GL=glfw`
+- Builds train/eval envs with `VecNormalize`, validates RGB, and sets up callbacks:
+	- `RGBMonitoringCallback` for per‑step/episode metrics and non‑disruptive RGB checks
+	- `CheckpointCallback` for periodic saves
+	- `CurriculumAwareEvalCallback` to evaluate/sync curriculum
+	- `PerformanceEarlyStoppingCallback` to stop on long‑term regressions
+- Enables domain randomization after initial grasp successes
 
-- **Python 3.8+**
-- **macOS** (optimized for Apple Silicon M1/M2) or **Ubuntu 24.04** (Recommended)
-- **MuJoCo 2.3+**
-- **8GB+ RAM** (16GB+ recommended for training)
-- **RTX 4060 8GB GPU**
+### Curriculum manager (current)
+- File: `training/curriculum_manager.py`
+- Phases (in order):
+	- milestone_0_percent → 5% → 10% → 15% → 20% → 25% → 30% → grasping → manipulation → mastery
+- Each milestone defines:
+	- spawn_radius, objects, mass_range (grams), randomization flags (color, lighting, friction)
+	- success thresholds, min episodes/time, and cooldown before advancing
+- Provides robust curriculum level sync with env wrappers (env_method/venv/direct), milestone setting, collision reward config, and verification
 
-## Training Features
+### Domain randomization (current)
+- File: `utils/domain_randomization.py`
+- `DomainRandomizer` with dynamics, material, lighting, geometry, and camera noise randomization
+- `set_milestone_parameters(mass_range, color_randomization, lighting_randomization, friction_randomization, objects)`:
+	- mass_range in grams is converted to kg; object masses sampled as absolute values
+	- independently gates color, lighting, and friction randomization
+- `CurriculumDomainRandomizer.set_curriculum_level(level)` scales ranges by curriculum level
 
-- **Curriculum Learning**: Progressive difficulty with curriculum manager
-- **Domain Randomization**: Physics, lighting, and object property variations 
-- **Real-time Monitoring**: TensorBoard integration with custom training metrics
-- **Checkpoint Management**: Automatic model saving and evaluation callbacks
-- **Memory Optimization**: Efficient training on consumer hardware (M1/M2 optimized)
-- **Object Perception Logging**: Comprehensive CNN analysis correlating spawned vs perceived objects
-- **Physics Stability**: Enhanced contact parameters and object drop recovery
+### Visual perception
+- Custom CNN features: `training/sim_to_real_cnn.py`
+- RGB validation indices handled consistently in the trainer
+- Optional object perception logging in tests for visibility/content checks
 
-## Camera Integration
+## Setup
 
-The environment features sophisticated camera integration with debugging capabilities:
+- Create a Conda env using `environment.yml`
+- MuJoCo GL is auto‑configured by the training script; no manual export needed in common cases
 
-- **RealSense D435i Simulation**: Accurate camera modeling for sim-to-real transfer
-- **RGBD Processing**: Combined RGB and depth information processing
-- **Dynamic Camera Switching**: Multiple viewpoints for comprehensive visual training
-- **Visual Feature Extraction**: Custom CNN architectures with SimToRealCNNExtractor
-- **Object-Camera Correlation**: Deep logging system tracking object visibility and CNN perception
-- **Camera Visibility Metrics**: Real-time monitoring of object detection success rates
+## Train
 
-## Robot Control
+From `homestri_ur5e_rl/training`:
 
-### Controller Hierarchy
+```bash
+# macOS (MPS) or Ubuntu (CUDA); pick a config
+python training_script_integrated.py --config config_m2_optimized.yaml
+# or
+python training_script_integrated.py --config config_rtx4060_optimized.yaml
+```
 
-The project uses the enhanced Homestri controller framework:
+Artifacts are written under `experiments/ur5e_pickplace_YYYYMMDD_HHMMSS/`.
 
-1. **Operational Space Controller**: End-effector pose control with improved stability
-2. **Joint Position Controller**: Direct joint angle control with safety limits
-3. **Joint Velocity Controller**: Velocity-based control with smoothing
-4. **Compliance Controller**: Force/torque control for contact tasks
+## Evaluate
 
-### Enhanced Safety Features
+```bash
+# After training, test best model (renders if supported)
+python training_script_integrated.py --config config_rtx4060_optimized.yaml --test experiments/<run>/best_model --episodes 5 --visual
+```
 
-- **Advanced Stuck Detection**: Multi-modal detection and recovery from stuck states
-- **Workspace Monitoring**: Real-time boundary checking and collision avoidance
-- **Grasp Detection**: Intelligent gripper control and object attachment logic
-- **Smooth Trajectories**: Action smoothing for stable robot behavior
-- **Physics Stability**: Enhanced contact parameters, friction settings, and object drop recovery
-- **Emergency Stops**: Comprehensive safety mechanisms for training and deployment
+## Notes
 
-## Performance & Results
+- Training uses `VecNormalize` for observations; evaluation env stats are synced after each training chunk
+- RGB validation runs non‑disruptively during training; issues print GL/DISPLAY hints
+- Domain randomization is gated per‑milestone and typically enabled after initial grasp successes
 
-### Current Training Metrics (330k+ Steps Training Run)
+## Acknowledgments
 
-- **Training Steps**: Successfully completed 330k+ timesteps on M2 MacBook Pro
-- **Physics Stability**: Perfect 0% collision rate throughout training
-- **Reward Convergence**: Stable rewards in 65-80 range during successful episodes
-- **Training Speed**: ~2000 FPS on MacBook Pro M2 (optimized)
-- **Memory Usage**: Efficient operation within 8-16GB RAM constraints
-- **Camera Integration**: Fixed object spawning enables proper visual learning
-
-### Success Criteria 
-
-- **Physics Stability**
-- **Object Spawning**
-- **Camera Visibility**
-- **Reaching**
-- **Grasping**
-- **Transport**
-
-## 📚 Acknowledgments
-
-This project is built upon the excellent [Homestri UR5e RL framework](https://github.com/ian-chuang/homestri-ur5e-rl) by Ian Chuang. The original framework provided the foundation for:
-
-- UR5e robot modeling and simulation with MuJoCo
-- Basic environment setup and Gymnasium integration
-- Controller implementations and robot kinematics
-- Initial pick-place task structure
-
-### Original Homestri Repository References
-
-The base framework was inspired by and references:
-
-- [ARISE-Initiative/robosuite](https://github.com/ARISE-Initiative/robosuite) - Robot simulation environments
-- [ir-lab/irl_control](https://github.com/ir-lab/irl_control) - Robot control algorithms
-- [abr/abr_control](https://github.com/abr/abr_control) - Adaptive robot control systems
-
-## Key Enhancements Over Original Homestri
-
-This project significantly extends the original framework with production-ready features:
-
-### Advanced RL Training
-
-- **Complete PPO Pipeline**: Full training implementation 
-- **Curriculum Learning**: Progressive difficulty scaling with curriculum manager
-- **Comprehensive Callbacks**: Detailed logging, evaluation, and checkpoint management
-- **Apple Silicon Optimization**: Native M1/M2 support 
-
-### Computer Vision Integration
-
-- **RealSense D435i Simulation**: Accurate camera modeling for sim-to-real transfer
-- **CNN Feature Extraction**: Custom SimToRealCNNExtractor for visual perception
-- **Object-Camera Correlation**: Deep logging system tracking visual perception accuracy
-- **Multi-Camera Support**: Dynamic camera switching and comprehensive viewpoints
-
-### Robust Domain Randomization
-
-- **Physics Randomization**: Comprehensive physics parameter variation (DEBUGGED)
-- **Visual Randomization**: Lighting, material, and environmental variations
-- **Object Property Randomization**: Size, mass, friction randomization (FIXED)
-- **Conditional Randomization**: Proper flag-based control of randomization features
-
-### Production Safety & Stability
-
-- **Advanced Stuck Detection**: Multi-modal detection and recovery mechanisms
-- **Physics Stability**: Enhanced contact parameters and object drop recovery
-- **Workspace Safety**: Real-time boundary checking and collision avoidance
-- **Emergency Systems**: Comprehensive safety mechanisms for training and deployment
-
-### Research & Development Tools
-
-- **Comprehensive Analytics**: TensorBoard integration with custom training metrics
-- **Object Perception Logging**: CNN analysis correlating spawned vs perceived objects
-- **Policy Analysis Tools**: Model evaluation and behavior analysis utilities
-- **Deployment Pipeline**: Complete sim-to-real transfer system for real UR5e robots
+Built on the Homestri UR5e RL framework and the MuJoCo/Gymnasium/Stable‑Baselines3/PyTorch ecosystem.
 
 ## License
 
-This project maintains compatibility with the original Homestri framework licensing. Please refer to the original repository for license details.
-
-## Project Status
-
-**Note**: This repository represents an **active research project**.
-
-The enhanced features focus on achieving high sim-to-real transfer success rates for robotic manipulation tasks through rigorous debugging, comprehensive logging, and stable training performance. **This repository will not be maintained after project completion** but serves as a complete reference implementation for UR5e reinforcement learning research.
+See upstream Homestri project for original license terms. This repo follows compatible licensing.
