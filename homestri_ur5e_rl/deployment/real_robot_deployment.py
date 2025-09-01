@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Real Robot Deployment Script for UR5e with Robotiq 2F-85
 Includes safety features and real-time monitoring

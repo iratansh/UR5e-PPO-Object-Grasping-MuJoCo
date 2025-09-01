@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Diagnostic script to identify and fix training issues
 Run this to diagnose why your model isn't learning

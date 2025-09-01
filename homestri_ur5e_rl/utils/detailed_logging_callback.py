@@ -38,8 +38,8 @@ class DetailedLoggingCallback(BaseCallback):
                     self.episode_lengths.append(episode_length)
                     self.total_episodes += 1
                     
-                    # Track success rate
-                    if 'task_completed' in info and info['task_completed']:
+                    # Track success rate - check both possible success indicators
+                    if (info.get('task_completed', False) or info.get('is_success', False)):
                         self.success_count += 1
                 
                 # Track issues
@@ -123,3 +123,14 @@ class DetailedLoggingCallback(BaseCallback):
             self.episode_lengths = self.episode_lengths[-100:]
         if len(self.action_magnitudes) > 2000:
             self.action_magnitudes = self.action_magnitudes[-1000:]
+    
+    def reset_totals(self):
+        """Reset callback-level aggregate metrics on phase change."""
+        print(f"   🔄 Resetting callback metrics: success_count={self.success_count} → 0, total_episodes={self.total_episodes} → 0")
+        self.success_count = 0
+        self.total_episodes = 0
+        self.collision_count = 0
+        self.stuck_count = 0
+        # Keep recent episode history but reset totals
+        self.episode_rewards = []
+        self.episode_lengths = []

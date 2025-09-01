@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
 """
 Real Robot Deployment Utilities for UR5e Pick-and-Place
 Bridges sim-to-real gap with homestri integration
+NOTE: As mentioned earlier in documentation, this codebase is intended for simulation based training and hasn't been tested via sim-to-real. Although the randomization factors should support some level of generalization, real-world performance may vary.
 """
 
 import numpy as np

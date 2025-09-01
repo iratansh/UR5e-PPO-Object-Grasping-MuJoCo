@@ -1,6 +1,6 @@
 """
 RealSense D435i Camera Integration for MuJoCo
-FIXED: Proper rendering context handling for parallel environments
+Proper rendering context handling for parallel environments
 """
 
 import numpy as np
@@ -15,7 +15,7 @@ os.environ["MUJOCO_GL"] = "glfw"
 class RealSenseD435iSimulator:
     """
     RealSense D435i simulator with accurate FOV settings
-    FIXED: Lazy context initialization for parallel environments
+    Lazy context initialization for parallel environments
     RGB: 69° × 42° (H×V)
     Depth: 58° × 45° (H×V)
     """
@@ -51,17 +51,17 @@ class RealSenseD435iSimulator:
             self.rgb_camera_id = -1
             self.depth_camera_id = -1
             
-        # RealSense D435i official parameters from Intel specs
+        # RealSense D435i parameters
         self.rgb_fov_horizontal = 69.0   # degrees
-        self.rgb_fov_vertical = 42.0     # degrees
+        self.rgb_fov_vertical = 84.0     # degrees 
         self.depth_fov_horizontal = 87.0  # degrees 
-        self.depth_fov_vertical = 58.0    # degrees
+        self.depth_fov_vertical = 90.0    # degrees 
         
         self.min_depth = 0.28  # meters
         self.max_depth = 3.0   # meters
         self.depth_noise_percent = 0.02  # 2% at 2m
         
-        # FIXED: Delay rendering initialization until first use
+        # Delay rendering initialization until first use
         self.scene = None
         self.context = None
         self.viewport = None
@@ -164,17 +164,18 @@ class RealSenseD435iSimulator:
             print(f"❌ Failed to reinitialize rendering: {e}")
             self._initialized = False
             
-    def render_rgbd(self) -> np.ndarray:
+    def render(self) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Render RGB-D data with lazy initialization and error recovery
-        Returns: Flattened RGBD array (resolution^2 * 4)
+        Render RGB and Depth images separately (expected by environment)
+        Returns: (rgb_image, depth_image) as separate arrays
         """
         # Ensure initialized
         self._ensure_initialized()
         
         # Check if camera is valid
         if self.rgb_camera_id < 0:
-            return np.zeros(self.resolution * self.resolution * 4, dtype=np.float32)
+            return (np.zeros((self.resolution, self.resolution, 3), dtype=np.uint8),
+                    np.zeros((self.resolution, self.resolution), dtype=np.float32))
         
         # Check if context is valid
         if self.context is None:
@@ -182,7 +183,8 @@ class RealSenseD435iSimulator:
             self._reinit_rendering()
             if self.context is None:
                 # Return dummy data if still failed
-                return np.zeros(self.resolution * self.resolution * 4, dtype=np.float32)
+                return (np.zeros((self.resolution, self.resolution, 3), dtype=np.uint8),
+                        np.zeros((self.resolution, self.resolution), dtype=np.float32))
     
         try:
             # Set buffer to offscreen and render the scene
@@ -190,8 +192,9 @@ class RealSenseD435iSimulator:
             mujoco.mjv_updateScene(self.model, self.data, self.option, None, self.rgb_camera, mujoco.mjtCatBit.mjCAT_ALL, self.scene)
             mujoco.mjr_render(self.viewport, self.scene, self.context)
             
-            # Read both RGB and Depth buffers
-            mujoco.mjr_readPixels(self.rgb_buffer, self.depth_buffer, self.viewport, self.context)
+            # Read RGB and Depth buffers separately for better reliability
+            mujoco.mjr_readPixels(self.rgb_buffer, None, self.viewport, self.context)
+            mujoco.mjr_readPixels(None, self.depth_buffer, self.viewport, self.context)
 
             # Check for blank buffer (context issue)
             if np.max(self.rgb_buffer) == 0:
@@ -210,27 +213,67 @@ class RealSenseD435iSimulator:
                         mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_OFFSCREEN, self.context)
                         mujoco.mjv_updateScene(self.model, self.data, self.option, None, self.rgb_camera, mujoco.mjtCatBit.mjCAT_ALL, self.scene)
                         mujoco.mjr_render(self.viewport, self.scene, self.context)
-                        mujoco.mjr_readPixels(self.rgb_buffer, self.depth_buffer, self.viewport, self.context)
+                        mujoco.mjr_readPixels(self.rgb_buffer, None, self.viewport, self.context)
+                        mujoco.mjr_readPixels(None, self.depth_buffer, self.viewport, self.context)
             
-            # Process RGB
-            rgb_processed = np.flipud(self.rgb_buffer.copy()).astype(np.float32) / 255.0
+            # Process RGB - return as uint8 (0-255 range)
+            rgb_processed = np.flipud(self.rgb_buffer.copy())
             
-            # Process Depth
-            depth_processed = self._process_depth(np.flipud(self.depth_buffer.copy()))
+            # Process Depth - return as float32 in meters
+            depth_processed = self._process_depth_meters(np.flipud(self.depth_buffer.copy()))
             
-            # Combine RGBD
-            rgbd = np.zeros((self.resolution, self.resolution, 4), dtype=np.float32)
-            rgbd[:, :, :3] = rgb_processed
-            rgbd[:, :, 3] = depth_processed
-            
-            return rgbd.flatten()
+            return rgb_processed, depth_processed
             
         except Exception as e:
             # Don't spam errors
             if not hasattr(self, '_render_error_logged'):
                 print(f" Camera render error: {e}")
                 self._render_error_logged = True
-            return np.zeros(self.resolution * self.resolution * 4, dtype=np.float32)
+            return (np.zeros((self.resolution, self.resolution, 3), dtype=np.uint8),
+                    np.zeros((self.resolution, self.resolution), dtype=np.float32))
+    
+    def render_rgbd(self) -> np.ndarray:
+        """
+        Render RGB-D data with lazy initialization and error recovery
+        Returns: Flattened RGBD array (resolution^2 * 4)
+        """
+        # Use the separate render method and combine
+        rgb, depth = self.render()
+        
+        # Convert RGB to float32 0-1 range
+        rgb_normalized = rgb.astype(np.float32) / 255.0
+        
+        # Normalize depth to 0-1 range
+        depth_normalized = self._normalize_depth(depth)
+        
+        # Combine RGBD
+        rgbd = np.zeros((self.resolution, self.resolution, 4), dtype=np.float32)
+        rgbd[:, :, :3] = rgb_normalized
+        rgbd[:, :, 3] = depth_normalized
+        
+        return rgbd.flatten()
+    
+    def _process_depth_meters(self, raw_depth: np.ndarray) -> np.ndarray:
+        """Convert MuJoCo depth buffer to depth in meters (for render method)"""
+        try:
+            extent = self.model.stat.extent
+            near = self.model.vis.map.znear * extent
+            far = self.model.vis.map.zfar * extent
+            
+            depth_meters = np.zeros_like(raw_depth)
+            valid_mask = (raw_depth > 0) & (raw_depth < 1) & np.isfinite(raw_depth)
+            
+            if np.any(valid_mask):
+                depth_meters[valid_mask] = near * far / (far - raw_depth[valid_mask] * (far - near))
+            
+            depth_meters = self._add_depth_noise(depth_meters)
+            depth_meters = self._apply_range_limits(depth_meters)
+            
+            return depth_meters  # Return in meters, not normalized
+            
+        except Exception as e:
+            print(f" Depth processing error: {e}")
+            return np.zeros_like(raw_depth, dtype=np.float32)
     
     def _process_depth(self, raw_depth: np.ndarray) -> np.ndarray:
         """Convert MuJoCo depth buffer to realistic depth values"""
