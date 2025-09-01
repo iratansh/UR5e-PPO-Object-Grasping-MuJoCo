@@ -13,42 +13,29 @@ import yaml
 from typing import Dict, Optional
 import time
 
-# Setup Ubuntu MuJoCo compatibility with RGB fix
 def setup_ubuntu_mujoco():
     """Setup MuJoCo for Ubuntu with proper RGB rendering"""
     if platform.system() == "Linux":
         print("🐧 Configuring MuJoCo for Ubuntu...")
-        
-        # Check if we have a display available
         has_display = "DISPLAY" in os.environ
-        
         if has_display:
-            # If display is available, use GLFW for better RGB rendering
             print("   Display detected - using GLFW for RGB support")
             os.environ["MUJOCO_GL"] = "glfw"
-            # Don't force headless mode
             if "MUJOCO_HEADLESS" in os.environ:
                 del os.environ["MUJOCO_HEADLESS"]
         else:
-            # Only use EGL if truly headless
             print("   No display detected - using EGL (RGB may be limited)")
             os.environ["MUJOCO_GL"] = "egl"
             os.environ["MUJOCO_HEADLESS"] = "1"
-        
-        # OpenGL settings for stability
         os.environ["MESA_GL_VERSION_OVERRIDE"] = "3.3"
         os.environ["MESA_GLSL_VERSION_OVERRIDE"] = "330"
-        
-        # Don't disable extensions - they may be needed for proper rendering
         if "MUJOCO_GL_DISABLE_EXTENSIONS" in os.environ:
             del os.environ["MUJOCO_GL_DISABLE_EXTENSIONS"]
-        
         print("✅ Ubuntu MuJoCo environment configured")
     elif platform.system() == "Darwin":
         print("🍎 macOS detected - using Apple Silicon optimizations")
         os.environ["MUJOCO_GL"] = "glfw"
 
-# Apply Ubuntu fixes immediately
 setup_ubuntu_mujoco()
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -61,7 +48,6 @@ from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback,
 from homestri_ur5e_rl.training.curriculum_aware_eval_callback import CurriculumAwareEvalCallback
 from stable_baselines3.common.monitor import Monitor
 
-# Import  components
 from homestri_ur5e_rl.envs import UR5ePickPlaceEnvEnhanced
 from homestri_ur5e_rl.training.sim_to_real_cnn import SimToRealCNNExtractor
 from homestri_ur5e_rl.training.progressive_callback import ProgressiveTrainingCallback
@@ -73,21 +59,13 @@ class IntegratedTrainer:
     """Trainer with optimized hyperparameters for 200-step episodes and improved reward balance"""
     
     def __init__(self, config_path: Optional[str] = None, visual_training: bool = False):
-        # Load configuration
         self.config = self.load_config(config_path)
-        
-        # Setup visual training mode
         self.visual_training = visual_training
         if visual_training:
             print("Visual training mode enabled - you can watch the training process")
             self.config["environment"]["render_mode"] = "human"
-        
-        # Setup device
         self.setup_device()
-        
         self.setup_directories()
-        
-        # Initialize components
         self.curriculum_manager = None
         self.env = None
         self.model = None
@@ -108,7 +86,6 @@ class IntegratedTrainer:
             with open(config_path, 'r') as f:
                 config = yaml.safe_load(f)
                 
-            # Ensure headless mode is disabled for RGB rendering on Linux
             if platform.system() == "Linux" and "DISPLAY" in os.environ:
                 if "headless" in config.get("environment", {}):
                     config["environment"]["headless"] = False
@@ -116,40 +93,39 @@ class IntegratedTrainer:
                     
             return config
         
-        # Default configuration
         return {
             "environment": {
                 "xml_file": "custom_scene.xml",
                 "camera_resolution": 64,
                 "control_mode": "joint",
                 "use_stuck_detection": True,
-                "use_domain_randomization": False,  # start disabled; enable after early grasps
+                "use_domain_randomization": False,
                 "frame_skip": 5,
-                "initial_curriculum_level": 0.05,  # Match milestone_0_percent phase level
+                "initial_curriculum_level": 0.05,
                 "render_mode": None,
                 "headless": False,
             },
             "training": {
                 "total_timesteps": 800_000,
-                "learning_rate": 0.0005,  # better learning with improved rewards
-                "n_steps": 400,  # optimal for 200-step episodes (2x episode length)
-                "batch_size": 200,  # matches shorter episodes better
-                "n_epochs": 8,  # prevent overfitting on smaller batches
+                "learning_rate": 0.0005,
+                "n_steps": 400,
+                "batch_size": 200,
+                "n_epochs": 8,
                 "gamma": 0.995,
                 "gae_lambda": 0.95,
                 "clip_range": 0.2,
-                "ent_coef": 0.005,  # encourage exploration
+                "ent_coef": 0.005,
                 "vf_coef": 0.5,
                 "max_grad_norm": 0.7,
-                "detailed_log_freq": 1600,  # matches new n_steps
+                "detailed_log_freq": 1600,
                 "target_kl": 0.02,
             },
             "evaluation": {
-                "eval_freq": 16_000,  # matches new n_steps (40x400)
+                "eval_freq": 16_000,
                 "n_eval_episodes": 5,
             },
             "logging": {
-                "save_freq": 40_000,  # matches new n_steps (100x400)
+                "save_freq": 40_000,
                 "log_interval": 10,
             }
         }
@@ -159,13 +135,11 @@ class IntegratedTrainer:
         if torch.cuda.is_available():
             self.device = "cuda"
             print(f"Using CUDA acceleration (GPU: {torch.cuda.get_device_name(0)})")
-            # RTX 4060 optimizations
             torch.backends.cudnn.benchmark = True
             torch.backends.cuda.matmul.allow_tf32 = True
         elif torch.backends.mps.is_available():
             self.device = "mps"
             print("Using Apple Silicon MPS acceleration")
-            # M2 optimizations
             os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
             torch.set_num_threads(8)
         else:
@@ -184,7 +158,6 @@ class IntegratedTrainer:
         (self.exp_dir / "logs").mkdir(exist_ok=True)
         (self.exp_dir / "tensorboard").mkdir(exist_ok=True)
         
-        # Save config
         with open(self.exp_dir / "config.yaml", 'w') as f:
             yaml.dump(self.config, f)
             
@@ -201,26 +174,20 @@ class IntegratedTrainer:
         print(f"💻 Platform: {platform.system()} - {self.device}")
         print("="*50)
         
-        # Create environment with explicit headless=False for RGB
         env_config = self.config["environment"].copy()
         if platform.system() == "Linux":
             env_config["headless"] = False
             
         env = UR5ePickPlaceEnvEnhanced(**env_config)
         
-        # Validate RGB rendering is working
         print("\n🔍 Validating RGB rendering...")
         obs, _ = env.reset()
         self._validate_rgb_rendering(obs, "Initial environment test")
         
-        # Wrap with Monitor for logging
         env = Monitor(env, filename=str(self.exp_dir / "monitor.csv"))
         
-        # Create vectorized environment
         if platform.system() == "Linux":
-            # For Linux, ensure each subprocess also has proper GL settings
             def make_env():
-                # Ensure GL settings are propagated to subprocess
                 if "DISPLAY" in os.environ:
                     os.environ["MUJOCO_GL"] = "glfw"
                     if "MUJOCO_HEADLESS" in os.environ:
@@ -230,52 +197,43 @@ class IntegratedTrainer:
                 env_config["headless"] = False
                 return Monitor(UR5ePickPlaceEnvEnhanced(**env_config))
             
-            # Create multiple environments for parallel training
             n_envs = self.config.get("environment", {}).get("n_envs", 2)
             self.train_env = DummyVecEnv([make_env for _ in range(n_envs)])
         else:
-            # For other platforms, use simple setup
             self.train_env = DummyVecEnv([lambda: env])
         
         self.train_env = VecNormalize(
             self.train_env, 
             norm_obs=True, 
-            norm_reward=False,  # Disable reward normalization to match baseline
+            norm_reward=False,
             clip_obs=10.0,
-            clip_reward=25.0,  # Match environment reward clipping bounds
+            clip_reward=25.0,
             gamma=self.config["training"]["gamma"]
         )
         
-        # Evaluation environment - should be deterministic for consistent evaluation
         eval_env_config = self.config["environment"].copy()
         eval_env_config["render_mode"] = None
-        eval_env_config["headless"] = False  # Ensure RGB works in eval too
-        eval_env_config["use_domain_randomization"] = False  # Disable randomization for consistent evaluation
+        eval_env_config["headless"] = False
+        eval_env_config["use_domain_randomization"] = False
         eval_env = UR5ePickPlaceEnvEnhanced(**eval_env_config)
         eval_env = Monitor(eval_env)
         self.eval_env = DummyVecEnv([lambda: eval_env])
         
-        # Normalize eval env but don't update stats
         self.eval_env = VecNormalize(
             self.eval_env, 
             norm_obs=True, 
-            norm_reward=False,  # Match training environment normalization
+            norm_reward=False,
             clip_obs=10.0, 
-            clip_reward=25.0,  # Match training environment clipping
+            clip_reward=25.0,
             training=False
         )
 
-        # Initialize curriculum manager with vectorized environment
-        # Use trainer method for reset so it can be reused elsewhere
         self.curriculum_manager = CurriculumManager(self.train_env, on_phase_change_callback=self.reset_training_metrics)
 
-        # Set curriculum manager reference in environment for phase-aware success criteria
         env.curriculum_manager = self.curriculum_manager
         eval_env.curriculum_manager = self.curriculum_manager
 
-        # Force evaluation environment to use SAME curriculum phase and success criteria as training
         try:
-            # Force curriculum level sync immediately (not just during evaluation)
             if hasattr(env, 'curriculum_level') and hasattr(eval_env, 'set_curriculum_level'):
                 eval_env.set_curriculum_level(env.curriculum_level)
                 print(f"✅ Evaluation environment curriculum level synced to training: {env.curriculum_level}")
@@ -284,7 +242,6 @@ class IntegratedTrainer:
                 if hasattr(eval_env, 'set_curriculum_level'):
                     eval_env.set_curriculum_level(initial_curriculum_level)
                     print(f"✅ Evaluation environment curriculum level set to: {initial_curriculum_level}")
-            # CRUCIAL: Ensure evaluation uses same success criteria as training by sharing curriculum manager
             print(f"✅ Evaluation environment using curriculum phase: {self.curriculum_manager.current_phase}")
         except Exception as e:
             print(f"⚠️ Warning: Could not sync curriculum to evaluation environment: {e}")
@@ -340,11 +297,9 @@ class IntegratedTrainer:
         """Create PPO model withhyperparameters"""
         print("\n🧠 Creating PPO model with SimToRealCNN...")
         
-        # Ensure tensorboard directory exists
         tensorboard_log = str(self.exp_dir / "tensorboard")
         Path(tensorboard_log).mkdir(parents=True, exist_ok=True)
         
-        # Policy kwargs with conservative settings
         policy_kwargs = dict(
             features_extractor_class=SimToRealCNNExtractor,
             features_extractor_kwargs=dict(
@@ -352,15 +307,14 @@ class IntegratedTrainer:
                 camera_resolution=self.config["environment"]["camera_resolution"]
             ),
             net_arch=dict(
-                pi=[256, 256],  # Policy network
-                vf=[256, 256],  # Value network
+                pi=[256, 256],
+                vf=[256, 256],
             ),
-            activation_fn=torch.nn.Tanh,  # Tanh for stability
-            ortho_init=True,  # Orthogonal initialization
-            log_std_init=0.0,  # Initial policy variance
+            activation_fn=torch.nn.Tanh,
+            ortho_init=True,
+            log_std_init=0.0,
         )
         
-        # Optimized PPO settings for 200-step episodes
         self.model = PPO(
             "MlpPolicy",
             self.train_env,
@@ -390,13 +344,11 @@ class IntegratedTrainer:
         """Create training callbacks"""
         callbacks = []
         
-        # Detailed logging callback with RGB monitoring
         class RGBMonitoringCallback(DetailedLoggingCallback):
             def __init__(self, trainer, *args, **kwargs):
                 super().__init__(*args, **kwargs)
                 self.trainer = trainer
-                self.rgb_check_freq = 50000  # Check RGB every 50k steps frequency to avoid training disruption)
-                # Custom counters
+                self.rgb_check_freq = 50000
                 self.total_successes = 0
                 self.total_grasps = 0
                 self.total_episodes = 0
@@ -405,13 +357,12 @@ class IntegratedTrainer:
                     "milestone_15_percent", "milestone_20_percent", "milestone_25_percent",
                     "milestone_30_percent", "grasping", "manipulation", "mastery"
                 ])}
-                # New aggregation buffers
                 self.recent_min_dists = []
                 self.recent_approach_events = []
                 self.recent_contact_events = []
                 self.recent_vertical_signed_medians = []
-                self.recent_episode_successes = []  # Track individual episode success/failure
-                self.window = 100  # aggregation window
+                self.recent_episode_successes = []
+                self.window = 100
                 self._current_episode_min_planar = np.inf
                 self._current_episode_vertical_signed = []
             
@@ -420,33 +371,26 @@ class IntegratedTrainer:
                 if not self.trainer.curriculum_manager:
                     return
                 
-                # Use exact same calculation as detailed logging callback
-                recent_window = 50  # Always use 50 episodes for consistency across all metrics
+                recent_window = 50
                 if hasattr(self, 'recent_episode_successes') and self.recent_episode_successes:
                     recent_success_rate = np.mean(self.recent_episode_successes[-recent_window:]) if len(self.recent_episode_successes) >= 1 else 0.0
                 else:
-                    recent_success_rate = 0.0  # No episodes recorded yet
+                    recent_success_rate = 0.0
                 
-                # Update curriculum manager
                 curriculum_result = self.trainer.curriculum_manager.update(recent_success_rate)
                 
-                # Log phase changes immediately
                 if curriculum_result.get('phase_changed', False):
                     print(f"\n🎓 CURRICULUM ADVANCED: {curriculum_result['old_phase']} → {curriculum_result['new_phase']}")
                     print(f"   Recent success rate: {recent_success_rate:.1%}, Duration: {curriculum_result['phase_duration_hours']:.1f}h")
                     print(f"   Step: {self.n_calls}, Episodes: {self.total_episodes}")
 
             def _log_custom_metrics(self):
-                # Update curriculum manager with recent success rate
                 overall_success_rate = self.total_successes / max(1, self.total_episodes)
-                
-                # Use exact same calculation as detailed logging callback
-                recent_window = 50  # Always use 50 episodes for consistency across all metrics
+                recent_window = 50
                 if hasattr(self, 'recent_episode_successes') and self.recent_episode_successes:
-                    # Use exact same calculation method as detailed_logging_callback.py:125-126
                     recent_success_rate = np.mean(self.recent_episode_successes[-recent_window:]) if len(self.recent_episode_successes) >= 1 else 0.0
                 else:
-                    recent_success_rate = 0.0  # No episodes recorded yet
+                    recent_success_rate = 0.0
                 
                 if self.trainer.curriculum_manager:
                     curriculum_result = self.trainer.curriculum_manager.update(recent_success_rate)
@@ -473,9 +417,8 @@ class IntegratedTrainer:
                 self.logger.record("custom/total_successes", float(self.total_successes))
                 self.logger.record("custom/episodes", float(self.total_episodes))
                 self.logger.record("custom/grasp_rate_per_episode", float(grasp_rate))
-                # Log the same success rate that all other metrics use (recent 50-episode window)
                 self.logger.record("custom/success_rate_per_episode", float(recent_success_rate))
-                self.logger.record("custom/lifetime_success_rate", float(overall_success_rate))  # Keep lifetime for reference
+                self.logger.record("custom/lifetime_success_rate", float(overall_success_rate))
                 self.logger.record("custom/curriculum_phase_idx", float(phase_idx))
                 self.logger.record("custom/curriculum_phase_name", phase)
                 # New logs
@@ -495,65 +438,65 @@ class IntegratedTrainer:
                 for i, info in enumerate(infos):
                     if not isinstance(info, dict):
                         continue
-                    # Only count grasps on episode termination (done=True)
-                    if dones[i]:  # Only count when episode ends
+                    # Episode end handling and grasp counting
+                    done_flag = False
+                    if isinstance(dones, (list, np.ndarray)) and i < len(dones):
+                        done_flag = bool(dones[i])
+
+                    if done_flag:
                         grasp_events = info.get("grasp_events", 0)
                         if grasp_events > 0:
-                            # DEBUG: Log grasp counting to detect phantom increments
                             print(f"🔍 GRASP COUNT DEBUG: Episode {i} ENDED - adding {grasp_events} grasps (total was {self.total_grasps})")
-                            self.total_grasps += grasp_events  # Add all grasps from this episode
+                        self.total_grasps += grasp_events
+                        if grasp_events > 0:
                             print(f"🔍 GRASP COUNT DEBUG: Total grasps now {self.total_grasps}")
-                    
-                    # Extract reward components for other metrics
+
+                    # Per-step metrics extraction
                     rc = info.get("reward_components", {})
-                    
-                    # Fallback extraction if planar_distance missing
                     pd = info.get("planar_distance", None)
                     if pd is None and isinstance(rc, dict):
                         pd = rc.get("planar_dist", None)
                     if pd is not None:
                         if pd < self._current_episode_min_planar:
                             self._current_episode_min_planar = pd
+
                     vs = info.get("vertical_signed", None)
                     if vs is None and isinstance(rc, dict):
                         vs = rc.get("vertical_signed", None)
                     if vs is not None:
                         self._current_episode_vertical_signed.append(vs)
-                    # Debug: sample first few episodes if metrics absent
+
                     if self.total_episodes < 5 and (pd is None or vs is None) and self.n_calls < 2000 and isinstance(rc, dict):
                         if not hasattr(self, '_early_debug_printed'):
                             print("[DEBUG] Missing per-step metrics. Sample reward_components keys:", list(rc.keys())[:10])
                             self._early_debug_printed = True
-                    done_flag = False
-                    if isinstance(dones, (list, np.ndarray)) and i < len(dones):
-                        done_flag = bool(dones[i])
+
                     if done_flag:
                         self.total_episodes += 1
                         episode_success = info.get("is_success", False)
                         if episode_success:
                             self.total_successes += 1
-                        
-                        # Track individual episode results for curriculum
+
                         self.recent_episode_successes.append(1.0 if episode_success else 0.0)
-                        # Register with curriculum manager for gated advancement
                         if self.trainer.curriculum_manager:
                             try:
                                 self.trainer.curriculum_manager.register_episode_result(bool(episode_success))
-                            except Exception as e:
+                            except Exception:
                                 pass
-                        # Keep only recent episodes (last 50)
+
                         if len(self.recent_episode_successes) > 50:
                             self.recent_episode_successes = self.recent_episode_successes[-50:]
                         if np.isfinite(self._current_episode_min_planar):
                             self.recent_min_dists.append(self._current_episode_min_planar)
-                        # Episode-level fallback for approach/contact counts
+
                         ae = info.get("approach_events", rc.get("approach_events", 0) if isinstance(rc, dict) else 0)
                         ce = info.get("contact_events", rc.get("contact_events", 0) if isinstance(rc, dict) else 0)
                         self.recent_approach_events.append(ae)
                         self.recent_contact_events.append(ce)
+
                         if self._current_episode_vertical_signed:
                             self.recent_vertical_signed_medians.append(float(np.median(self._current_episode_vertical_signed)))
-                        # Maintain windows
+
                         if len(self.recent_min_dists) > self.window:
                             self.recent_min_dists = self.recent_min_dists[-self.window:]
                         if len(self.recent_approach_events) > self.window:
@@ -562,17 +505,15 @@ class IntegratedTrainer:
                             self.recent_contact_events = self.recent_contact_events[-self.window:]
                         if len(self.recent_vertical_signed_medians) > self.window:
                             self.recent_vertical_signed_medians = self.recent_vertical_signed_medians[-self.window:]
-                        # Reset episode trackers
+
                         self._current_episode_min_planar = np.inf
                         self._current_episode_vertical_signed = []
-                # Don't reset environment during training for RGB validation
-                # This was causing training disruption at step 10k
+                # Don't reset environment during training for RGB validation (prevents disruption)
                 if self.n_calls % self.rgb_check_freq == 0 and self.n_calls > 0:
-                    # Just validate current observation without resetting
                     current_obs = self.locals.get('observations', None)
                     if current_obs is not None and len(current_obs) > 0:
                         self.trainer._validate_rgb_rendering(current_obs[0], f"Step {self.n_calls} (non-disruptive check)")
-                # Update curriculum every rollout (512 steps) not just every log_freq (1600 steps)
+                # Update curriculum every rollout (512)
                 if self.n_calls % 512 == 0:
                     self._update_curriculum_only()
                 
@@ -584,9 +525,7 @@ class IntegratedTrainer:
             def reset_totals(self):
                 self.total_grasps = 0
                 self.total_successes = 0
-                if hasattr(self, 'recent_episode_successes'):
-                    # Optional: start fresh recent window for the new phase
-                    self.recent_episode_successes = []
+                self.recent_episode_successes = []
                 if hasattr(self, 'recent_min_dists'):
                     self.recent_min_dists = []
                 if hasattr(self, 'recent_approach_events'):
@@ -595,7 +534,6 @@ class IntegratedTrainer:
                     self.recent_contact_events = []
                 if hasattr(self, 'recent_vertical_signed_medians'):
                     self.recent_vertical_signed_medians = []
-                # Episode trackers reset naturally at episode end; keep as-is
                 print("[RGBMonitoringCallback] Totals reset due to phase change")
         
         detailed_logger = RGBMonitoringCallback(
@@ -605,15 +543,12 @@ class IntegratedTrainer:
         )
         callbacks.append(detailed_logger)
 
-        # Register a combined phase-change reset to keep trainer and callback in sync
         if self.curriculum_manager is not None:
             def _combined_phase_change_reset():
-                # Reset trainer-level aggregates
                 try:
                     self.reset_training_metrics()
                 except Exception as e:
                     print(f"   ⚠️ Failed to reset trainer metrics: {e}")
-                # Reset callback-level aggregates
                 try:
                     detailed_logger.reset_totals()
                 except Exception as e:
@@ -629,7 +564,6 @@ class IntegratedTrainer:
         )
         callbacks.append(checkpoint_callback)
         
-        # Use curriculum-aware evaluation callback that syncs before evaluations
         eval_callback = CurriculumAwareEvalCallback(
             self.eval_env,
             trainer=self,  # Pass reference for curriculum sync
@@ -642,7 +576,6 @@ class IntegratedTrainer:
         )
         callbacks.append(eval_callback)
         
-        # More lenient early stopping to avoid premature termination
         early_stopping_callback = PerformanceEarlyStoppingCallback(
             patience=10,  # Allow 10 evaluations (100k steps) without improvement - was too aggressive at 5
             min_delta=0.01,  # 1% improvement threshold - was too strict at 2%
@@ -661,24 +594,17 @@ class IntegratedTrainer:
             self.eval_env.ret_rms = self.train_env.ret_rms
             print("✅ VecNormalize stats synced from training to evaluation environment")
         
-        # Sync curriculum level to evaluation environment
         try:
-            # Get current curriculum level from training environment
             if hasattr(self.train_env, 'venv'):
-                # VecNormalize wrapped environment
                 training_base_env = self.train_env.venv.envs[0]
             else:
-                # Direct access
                 training_base_env = self.train_env.envs[0]
             
             if hasattr(self.eval_env, 'venv'):
-                # VecNormalize wrapped environment
                 eval_base_env = self.eval_env.venv.envs[0]
             else:
-                # Direct access
                 eval_base_env = self.eval_env.envs[0]
             
-            # Store curriculum state BEFORE evaluation, will apply AFTER reset
             self.curriculum_state_to_sync = None
             if hasattr(training_base_env, 'curriculum_manager'):
                 self.curriculum_state_to_sync = {
@@ -688,8 +614,6 @@ class IntegratedTrainer:
                     'phase_episode_count': training_base_env.curriculum_manager.phase_episode_count
                 }
                 print(f"📋 Stored curriculum state for eval sync: {self.curriculum_state_to_sync['current_phase']} @ level {self.curriculum_state_to_sync['curriculum_level']:.3f}")
-            
-            # Will sync AFTER reset to prevent initialization override
                 
         except Exception as e:
             print(f"⚠️ Warning: Could not sync curriculum state to evaluation environment: {e}")
@@ -700,7 +624,6 @@ class IntegratedTrainer:
         self.create_env()
         self.create_model()
         callbacks = self.create_callbacks()
-        # Track early grasp successes to toggle domain randomization
         grasp_success_counter = 0
         domain_randomization_enabled = False
         try:
@@ -712,10 +635,8 @@ class IntegratedTrainer:
                                   progress_bar=True,  # re-enable progress bar
                                   log_interval=self.config["logging"]["log_interval"])
                 
-                # Sync normalization and curriculum to align training/evaluation behavior
                 self.sync_vecnormalize_stats()
                 
-                # After each chunk, check recent monitor file for grasp events
                 if self.curriculum_manager and self.curriculum_manager.collision_history:
                     recent = self.curriculum_manager.collision_history[-20:]
                     for ep in recent:
@@ -723,7 +644,6 @@ class IntegratedTrainer:
                             grasp_success_counter += 1
                 if (not domain_randomization_enabled) and grasp_success_counter >= 10:
                     print("🌈 Enabling domain randomization after 10 grasp successes")
-                    # Enable in underlying env instance(s)
                     base_env = self.train_env.envs[0].env
                     if hasattr(base_env, 'use_domain_randomization'):
                         base_env.use_domain_randomization = True
@@ -741,10 +661,8 @@ class IntegratedTrainer:
         print(f"   Average FPS: {self.config['training']['total_timesteps']/training_duration:.1f}")
         print(f"   Final curriculum phase: {self.curriculum_manager.current_phase if self.curriculum_manager else 'N/A'}")
         
-        # Log final model stats
         self._log_final_training_stats()
         
-        # Analyze final approach learning progress
         self.analyze_approach_learning_progress()
         
         # Get actual current timesteps from the model
@@ -755,7 +673,6 @@ class IntegratedTrainer:
         
         self.predict_breakthrough_timeline(actual_timesteps)
         
-        # Save final model
         print("\n💾 Saving final model...")
         self.model.save(str(self.exp_dir / "final_model"))
         self.train_env.save(str(self.exp_dir / "vec_normalize.pkl"))
@@ -763,7 +680,6 @@ class IntegratedTrainer:
         print(f"\n✅ Training completed!")
         print(f"📁 Results saved to: {self.exp_dir}")
         
-        # Print tensorboard command
         print(f"\n📊 View training progress with:")
         print(f"   tensorboard --logdir {self.exp_dir / 'tensorboard'}")
     
@@ -774,7 +690,6 @@ class IntegratedTrainer:
             
         print(f"\n🧪 Testing model: {model_path}")
         
-        # Load model
         model = PPO.load(str(model_path / "best_model.zip"))
         
         test_env_config = self.config["environment"].copy()
@@ -784,7 +699,6 @@ class IntegratedTrainer:
         
         env = UR5ePickPlaceEnvEnhanced(**test_env_config)
         
-        # Test episodes
         successes = 0
         total_rewards = []
         
@@ -796,7 +710,6 @@ class IntegratedTrainer:
             episode_reward = 0
             step_count = 0
             
-            # Log initial object perception and RGB status
             self._log_object_perception(env, obs, step_count, episode)
             self._validate_rgb_rendering(obs, f"Test episode {episode}")
             
@@ -807,14 +720,11 @@ class IntegratedTrainer:
                 episode_reward += reward
                 step_count += 1
                 
-                # Log object perception every 50 steps
                 if step_count % 50 == 0:
                     self._log_object_perception(env, obs, step_count, episode)
                 
-                # Render
                 env.render()
                 
-                # Small delay for visualization
                 if self.visual_training:
                     time.sleep(0.01)
                 
@@ -941,25 +851,18 @@ class IntegratedTrainer:
         try:
             print("\n📊 Evaluation Object Perception Summary:")
             
-            # Get the environment from eval_env
             if hasattr(self.eval_env, 'envs') and len(self.eval_env.envs) > 0:
                 env = self.eval_env.envs[0]
                 
-                # Don't reset eval environment during training - this interferes!
-                # Only get current state without disrupting episodes
-                # obs = self.eval_env.reset()  # REMOVED: This was causing episode reset interference
                 obs = None  # Will skip logging if no current observation available
                 
-                # Apply curriculum state AFTER reset to prevent initialization override
                 if hasattr(self, 'curriculum_state_to_sync') and self.curriculum_state_to_sync:
                     try:
-                        # Apply to the base environment after reset
                         if hasattr(env, 'curriculum_manager'):
                             env.curriculum_manager.current_phase = self.curriculum_state_to_sync['current_phase']
                             env.curriculum_manager.phase_progress = self.curriculum_state_to_sync['phase_progress']
                             env.curriculum_manager.phase_episode_count = self.curriculum_state_to_sync['phase_episode_count']
                             
-                        # Apply curriculum level
                         if hasattr(env, 'set_curriculum_level'):
                             env.set_curriculum_level(self.curriculum_state_to_sync['curriculum_level'])
                             
@@ -967,7 +870,6 @@ class IntegratedTrainer:
                     except Exception as e:
                         print(f"⚠️ Failed to apply curriculum state after reset: {e}")
                 
-                # Only log if we have observation without causing interference
                 if obs is not None:
                     self._log_object_perception(env, obs[0], 0, "eval")
                     self._validate_rgb_rendering(obs[0], "Evaluation environment")

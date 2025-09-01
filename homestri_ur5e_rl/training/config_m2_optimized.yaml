@@ -1,7 +1,3 @@
-# M2 Pro Optimized Configuration
-# Hardware: M2 Pro 12-core, 16GB RAM
-# Target: Stable training with 70%+ real-world success rate
-
 environment:
   n_envs: 1
   camera_resolution: 64
@@ -9,45 +5,45 @@ environment:
   xml_file: "custom_scene.xml"
   control_mode: "joint"
   use_stuck_detection: true
-  use_domain_randomization: false 
-  initial_curriculum_level: 0.05  
+  use_domain_randomization: false
+  initial_curriculum_level: 0.05
   render_mode: null
   
 training:
-  total_timesteps: 1_000_000  
-  learning_rate: 0.0001  #  Reduced from 0.0003 to prevent aggressive updates
-  n_steps: 512  # a bit larger for stabler gradients
-  batch_size: 256  # match n_steps
-  n_epochs: 3  #  Reduced from 4 to prevent over-optimization
-  gamma: 0.995  #  Increased for longer-term planning
+  total_timesteps: 1_000_000
+  learning_rate: 0.0001
+  n_steps: 512
+  batch_size: 256
+  n_epochs: 3
+  gamma: 0.995
   gae_lambda: 0.95
-  clip_range: 0.15  #  Much smaller range to prevent policy destruction
+  clip_range: 0.15
   clip_range_vf: null
   normalize_advantage: true
-  ent_coef: 0.01  #  Much lower to prioritize exploitation over exploration
+  ent_coef: 0.01
   vf_coef: 0.5
-  max_grad_norm: 0.3  #  Tighter clipping to prevent large updates
-  target_kl: 0.008  #  Very conservative to prevent policy divergence
-  use_sde: false  #  Disable SDE to reduce policy noise
+  max_grad_norm: 0.3
+  target_kl: 0.008
+  use_sde: false
   sde_sample_freq: 4
-  detailed_log_freq: 1600  # matches new n_steps
+  detailed_log_freq: 1600
   device: "mps"
   num_threads: 8
 
 evaluation:
-  eval_freq: 10000  #  More frequent evaluation
-  n_eval_episodes: 10  # Increased from 5 to get more reliable statistics
-  deterministic: false  # Use stochastic policy to match training behavior
+  eval_freq: 10000
+  n_eval_episodes: 10
+  deterministic: false
 
 logging:
-  save_freq: 40000  # matches new n_steps (100x400)
+  save_freq: 40000
   log_interval: 10
   reset_num_timesteps: false
   tb_log_name: "ur5e_stable"
   
 curriculum:
   enable: true
-  success_threshold: 0.20  # Keep 20% threshold as requested
+  success_threshold: 0.20
   phases:
     - name: "approach"
       description: "Learn safe approaching and distance reduction"
@@ -67,27 +63,27 @@ curriculum:
       focus: "task_completion"
 
 reward_structure:
-  distance_reward_scale: 1.5  # Increased to encourage approach learning
-  approach_bonus: 0.3  # Increased from 0.1 to better reward close approaches
-  contact_bonus: 1.0  # Increased from 0.5 to strongly reward contact
-  grasp_bonus: 3.0  # Increased from 2.0 to strongly reward grasping
-  lift_bonus: 2.0  # Increased from 1.0 
+  distance_reward_scale: 1.5
+  approach_bonus: 0.3
+  contact_bonus: 1.0
+  grasp_bonus: 3.0
+  lift_bonus: 2.0
   place_bonus: 5.0
   success_bonus: 10.0
-  time_penalty: -0.0005  # Reduced penalty to allow more exploration time
-  energy_penalty: -0.00005  # Reduced penalty to allow more movement
-  velocity_penalty_threshold: 1.2  # Increased threshold for faster movements
-  velocity_penalty_scale: -0.05  # Reduced penalty
+  time_penalty: -0.0005
+  energy_penalty: -0.00005
+  velocity_penalty_threshold: 1.2
+  velocity_penalty_scale: -0.05
   physics_violation_penalty: -1.0
-  stuck_penalty: -0.3  # Reduced penalty to be less punitive during learning
+  stuck_penalty: -0.3
   reward_clip_min: -20.0
   reward_clip_max: 20.0
 
 action_limits:
-  max_joint_velocity: 0.25  # Reduced from 0.4 to prevent instability
-  max_action_magnitude: 0.08  # Reduced from 0.15 to prevent large jumps
-  action_scale: 0.02  # Reduced from 0.03 for smoother control
-  action_smoothing_factor: 0.4  # Increased from 0.2 for more smoothing
+  max_joint_velocity: 0.25
+  max_action_magnitude: 0.08
+  action_scale: 0.02
+  action_smoothing_factor: 0.4
   max_consecutive_physics_errors: 3
 
 physics:

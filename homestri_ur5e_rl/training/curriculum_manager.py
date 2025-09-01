@@ -13,7 +13,7 @@ class CurriculumManager:
     def __init__(self, env, on_phase_change_callback=None):
         self.env = env
         self.current_phase = "milestone_0_percent"
-        self.on_phase_change_callback = on_phase_change_callback  # Callback to reset training metrics
+        self.on_phase_change_callback = on_phase_change_callback
         self.phase_progress = 0.0
         self.success_history: list[float] = []
         self.collision_history: list[Dict[str, Any]] = []
@@ -27,100 +27,93 @@ class CurriculumManager:
         self.success_ema_alpha = 0.1  # EMA smoothing factor
         self.last_advance_time = 0.0
         self.last_curriculum_level = None  # for smoothing level jumps
-
-        # Progressive Domain Randomization Curriculum - Approach Phase Breakdown
-        # Phase 1: Core Approach Learning (Fixed Environment)
-        # Phase 2: Environmental Robustness (Gradual Randomization)
-        # Phase 3: Full Robustness (Complete Randomization)
+        
         self.phases = {
-            # Phase 1: Core Approach Learning (25% success threshold)
             "milestone_0_percent": {
                 "timesteps": 30_000,
-                "success_threshold": 0.25,  # 25% success to advance
+                "success_threshold": 0.25,
                 "focus": "basic_approach_fixed",
                 "description": "Learn basic approach - NEAR SPAWN 8-14cm, fixed properties",
                 "collision_rewards": {"gripper_object_contact": 0.2, "arm_object_collision": -1.0},
                 "termination_on_bad_collision": False,
-                "spawn_radius": 0.11,  # NEAR SPAWN 8-14cm (avg 11cm)
+                "spawn_radius": 0.11,
                 "objects": ["cube_only"],
-                "mass_range": (50, 50),  # Fixed mass
-                "color_randomization": False,  # Fixed
-                "lighting_randomization": False,  # Fixed  
-                "friction_randomization": False,  # Fixed
+                "mass_range": (50, 50),
+                "color_randomization": False,
+                "lighting_randomization": False,
+                "friction_randomization": False,
                 "domain_randomization": False,
-                # Gating parameters per phase 
-                "min_phase_episodes": 80,  # Increased from 60
-                "min_phase_time_sec": 600,  # Increased from 300 (10 minutes minimum)
-                "advance_cooldown_sec": 180,  # Increased from 120
+                "min_phase_episodes": 80,
+                "min_phase_time_sec": 600,
+                "advance_cooldown_sec": 180,
             },
             "milestone_5_percent": {
                 "timesteps": 30_000,
-                "success_threshold": 0.25,  #  25% for Phase 1
+                "success_threshold": 0.25,
                 "focus": "expanded_approach_fixed", 
                 "description": "Expand approach area - spawn_radius 0.20m, fixed properties",
                 "collision_rewards": {"gripper_object_contact": 0.2, "arm_object_collision": -1.0},
                 "termination_on_bad_collision": False,
-                "spawn_radius": 0.20,  #  0.20m
+                "spawn_radius": 0.20,
                 "objects": ["cube_only"],
-                "mass_range": (50, 50),  # Fixed mass
-                "color_randomization": False,  # Fixed
-                "lighting_randomization": False,  # Fixed
-                "friction_randomization": False,  # Fixed
+                "mass_range": (50, 50),
+                "color_randomization": False,
+                "lighting_randomization": False,
+                "friction_randomization": False,
                 "domain_randomization": False,
-                "min_phase_episodes": 80,  # Increased from 60  
-                "min_phase_time_sec": 600,  # Increased from 300 (10 minutes minimum)
-                "advance_cooldown_sec": 180,  # Increased from 120
+                "min_phase_episodes": 80,
+                "min_phase_time_sec": 600,
+                "advance_cooldown_sec": 180,
             },
-            # Phase 2: Environmental Robustness (10-30% success threshold)
             "milestone_10_percent": {
                 "timesteps": 30_000,
-                "success_threshold": 0.25,  # Should be 25% success to advance, not 10%
+                "success_threshold": 0.25,
                 "focus": "mass_variation_introduction",
                 "description": "Add mass variation - spawn_radius 0.25m, mass random 30-70g",
                 "collision_rewards": {"gripper_object_contact": 0.2, "arm_object_collision": -1.0},
                 "termination_on_bad_collision": False,
-                "spawn_radius": 0.25,  # 0.25m
+                "spawn_radius": 0.25,
                 "objects": ["cube_only"],
-                "mass_range": (30, 70),  # random 30-70g
-                "color_randomization": False,  # Fixed
-                "lighting_randomization": False,  # Fixed
-                "friction_randomization": False,  # Fixed  
+                "mass_range": (30, 70),
+                "color_randomization": False,
+                "lighting_randomization": False,
+                "friction_randomization": False,
                 "domain_randomization": True,
-                "min_phase_episodes": 100,  # Increased from 80
-                "min_phase_time_sec": 720,  # Increased from 420 (12 minutes minimum) 
-                "advance_cooldown_sec": 240,  # Increased from 180
+                "min_phase_episodes": 100,
+                "min_phase_time_sec": 720,
+                "advance_cooldown_sec": 240,
             },
             "milestone_15_percent": {
                 "timesteps": 30_000,
-                "success_threshold": 0.15,  # 15% success to advance
+                "success_threshold": 0.15,
                 "focus": "visual_variation_introduction",
                 "description": "Add color randomization - spawn_radius 0.30m, color random RGB",
                 "collision_rewards": {"gripper_object_contact": 0.2, "arm_object_collision": -1.0},
                 "termination_on_bad_collision": False,
-                "spawn_radius": 0.30,  # 0.30m
+                "spawn_radius": 0.30,
                 "objects": ["cube_only"],
-                "mass_range": (30, 70),  # Continue mass variation
-                "color_randomization": True,  # Add color randomization
-                "lighting_randomization": False,  # Fixed
-                "friction_randomization": False,  # Fixed
+                "mass_range": (30, 70),
+                "color_randomization": True,
+                "lighting_randomization": False,
+                "friction_randomization": False,
                 "domain_randomization": True,
-                "min_phase_episodes": 100,  # Increased from 80
-                "min_phase_time_sec": 720,  # Increased from 420 (12 minutes minimum)
-                "advance_cooldown_sec": 240,  # Increased from 180
+                "min_phase_episodes": 100,
+                "min_phase_time_sec": 720,
+                "advance_cooldown_sec": 240,
             },
             "milestone_20_percent": {
                 "timesteps": 35_000,
-                "success_threshold": 0.20,  # 20% success threshold
+                "success_threshold": 0.20,
                 "focus": "physics_variation_introduction", 
                 "description": "Add lighting + friction - spawn_radius 0.35m, lighting + friction random",
                 "collision_rewards": {"gripper_object_contact": 0.2, "arm_object_collision": -1.0},
                 "termination_on_bad_collision": False,
-                "spawn_radius": 0.35,  # 0.35m
+                "spawn_radius": 0.35,
                 "objects": ["cube_only"],
-                "mass_range": (20, 100),  # Expanded mass range
+                "mass_range": (20, 100),
                 "color_randomization": True,
-                "lighting_randomization": True,  # Add lighting variation
-                "friction_randomization": True,  # Add friction randomization
+                "lighting_randomization": True,
+                "friction_randomization": True,
                 "domain_randomization": True,
                 "min_phase_episodes": 100,
                 "min_phase_time_sec": 600,
@@ -128,13 +121,13 @@ class CurriculumManager:
             },
             "milestone_25_percent": {
                 "timesteps": 35_000,
-                "success_threshold": 0.25,  # 25% success to advance
+                "success_threshold": 0.25,
                 "focus": "multi_object_introduction",
                 "description": "Add second object - spawn_radius 0.40m, [cube, sphere]",
                 "collision_rewards": {"gripper_object_contact": 0.2, "arm_object_collision": -1.0},
                 "termination_on_bad_collision": False,
-                "spawn_radius": 0.40,  # 0.40m
-                "objects": ["cube", "sphere"],  # Add sphere
+                "spawn_radius": 0.40,
+                "objects": ["cube", "sphere"],
                 "mass_range": (20, 150),
                 "color_randomization": True,
                 "lighting_randomization": True,
@@ -144,16 +137,15 @@ class CurriculumManager:
                 "min_phase_time_sec": 900,
                 "advance_cooldown_sec": 240,
             },
-            # Phase 3: Full Robustness (30%+ success)
             "milestone_30_percent": {
                 "timesteps": 40_000,
-                "success_threshold": 0.30,  # 30% success to advance to grasping
+                "success_threshold": 0.30,
                 "focus": "full_approach_robustness",
                 "description": "Full robustness - spawn_radius 0.45m, [cube, sphere, cylinder] + full randomization",
                 "collision_rewards": {"gripper_object_contact": 0.2, "arm_object_collision": -1.0},
                 "termination_on_bad_collision": False,
-                "spawn_radius": 0.45,  # 0.45m
-                "objects": ["cube", "sphere", "cylinder"],  # All object types
+                "spawn_radius": 0.45,
+                "objects": ["cube", "sphere", "cylinder"],
                 "mass_range": (20, 200),
                 "color_randomization": True,
                 "lighting_randomization": True,
@@ -163,10 +155,9 @@ class CurriculumManager:
                 "min_phase_time_sec": 1200,
                 "advance_cooldown_sec": 300,
             },
-            # Then proceed to grasping stage
             "grasping": {
-                "timesteps": 400_000,  # Increased training time
-                "success_threshold": 0.35,  # More realistic with gentler spawn progression (was 0.50)
+                "timesteps": 400_000,
+                "success_threshold": 0.35,
                 "focus": "successful_grasp",
                 "description": "Consistently grasp and lift objects",
                 "collision_rewards": {"successful_grasp": 1.5, "arm_object_collision": -1.0},
@@ -177,8 +168,8 @@ class CurriculumManager:
                 "advance_cooldown_sec": 300,
             },
             "manipulation": {
-                "timesteps": 600_000,  # Increased training time
-                "success_threshold": 0.70,  #70% for real-world transfer
+                "timesteps": 600_000,
+                "success_threshold": 0.70,
                 "focus": "lift_and_place",
                 "description": "Reliably place objects at targets",
                 "collision_rewards": {"successful_place": 3.0, "arm_object_collision": -0.5},
@@ -188,8 +179,8 @@ class CurriculumManager:
                 "advance_cooldown_sec": 300,
             },
             "mastery": {
-                "timesteps": 800_000,  # Increased training time
-                "success_threshold": 0.85,  # 85% for robust deployment
+                "timesteps": 800_000,
+                "success_threshold": 0.85,
                 "focus": "efficient_place",
                 "description": "Achieve deployment-ready performance",
                 "collision_rewards": {"collision_free_success": 4.0, "any_unwanted_collision": -0.2},
@@ -204,7 +195,7 @@ class CurriculumManager:
         print(f"🎯 CURRICULUM INITIALIZATION:")
         print(f"   Starting Phase: {self.current_phase}")
         print(f"   Expected Behavior: {self.phases[self.current_phase]['description']}")
-        # Expose current phase on base env (for env-side checks/logs)
+    # Expose current phase on base env
         try:
             # Prefer proper set_attr on vectorized envs
             if hasattr(self.env, 'set_attr'):
@@ -220,7 +211,7 @@ class CurriculumManager:
             pass
         self._apply_phase_settings()
         
-        # Ensure curriculum level is applied immediately
+    # Apply curriculum level immediately
         sync_success = self._force_curriculum_level_sync()
         
         # Additional verification and debugging
@@ -230,7 +221,7 @@ class CurriculumManager:
         else:
             print(f"   ⚠️ Curriculum synchronization had issues - monitoring spawn behavior")
         
-        # Try to get current curriculum level for final verification
+    # Try to get current curriculum level for verification
         try:
             if hasattr(self.env, 'get_attr'):
                 current_levels = self.env.get_attr('curriculum_level')
@@ -257,17 +248,17 @@ class CurriculumManager:
         if collision_info:
             self.collision_history.append(collision_info)
         
-        # Periodic curriculum level verification (every ~20 episodes)
+    # Periodic curriculum level verification
         if len(self.success_history) % 20 == 0 and len(self.success_history) > 0:
             self.verify_curriculum_level()
 
-        # Compute recent success based on episode-level data first (preferred)
+    # Compute recent success based on episode-level data first
         ep_window_size = 50
         if self.episode_successes_window:
             use_n = min(ep_window_size, len(self.episode_successes_window))
             recent_success = float(np.mean(self.episode_successes_window[-use_n:]))
         else:
-            # Fallback to callback-provided success rate, smoothed
+            # Fallback to callback-provided success rate
             window_size = 50
             if len(self.success_history) >= window_size:
                 recent_success = float(np.mean(self.success_history[-window_size:]))
@@ -277,14 +268,14 @@ class CurriculumManager:
         current_phase_info = self.phases[self.current_phase]
         phase_complete = False
 
-        # Time-based check
+    # Time-based check
         time_in_phase = time.time() - self.phase_start_time
         max_phase_time = 3600 * 6  # 6 hours max per phase (reduced from 12)
 
-        # Primary advancement with proper approach success metrics
+    # Primary advancement metrics
         recent_collisions = self._analyze_recent_collisions()
 
-        # Gate advancements: require minimum episodes/time in phase and respect a cooldown between advancements
+    # Advancement gating
         min_episodes = current_phase_info.get("min_phase_episodes", 40)
         min_time_sec = current_phase_info.get("min_phase_time_sec", 300)  # 5 min default
         cooldown_sec = current_phase_info.get("advance_cooldown_sec", 120)  # 2 min between advances
@@ -292,10 +283,10 @@ class CurriculumManager:
         has_min_time = time_in_phase >= min_time_sec
         passed_cooldown = (time.time() - self.last_advance_time) >= cooldown_sec
 
-        # Improved stability gating with sustained success requirement
+    # Stability gating with sustained success
         sustained_success_required = 5  # Need sustained success over multiple checks
         
-        # Track sustained success over recent evaluations
+    # Track sustained success
         if not hasattr(self, '_sustained_success_count'):
             self._sustained_success_count = 0
             
@@ -304,7 +295,7 @@ class CurriculumManager:
         else:
             self._sustained_success_count = 0  # Reset if success drops
             
-        # Require ALL gating conditions PLUS sustained success
+    # Require all gating conditions plus sustained success
         meets_threshold = recent_success >= current_phase_info["success_threshold"]
         sustained_success = self._sustained_success_count >= sustained_success_required
         
@@ -312,8 +303,8 @@ class CurriculumManager:
             phase_complete = True
             print(f"✅ Phase complete via sustained success: {recent_success:.1%} >= {current_phase_info['success_threshold']:.1%}")
             print(f"   Sustained for {self._sustained_success_count} consecutive checks")
-        elif meets_threshold and (not has_min_episodes or not has_min_time or not sustained_success):
-            # Informative note: threshold reached but waiting for stability
+        elif meets_threshold:
+            # Threshold reached but waiting for stability
             missing = []
             if not has_min_episodes:
                 missing.append(f"episodes {self.phase_episode_count}/{min_episodes}")
@@ -324,32 +315,36 @@ class CurriculumManager:
             if not passed_cooldown:
                 missing.append(f"cooldown {(time.time() - self.last_advance_time):.0f}s/{cooldown_sec}s")
             print(f"⏳ Threshold met but waiting for stability: {', '.join(missing)}")
-        elif self.current_phase == "approach_learning" and time_in_phase > max_phase_time:
-            # time-based advancement for approach phase only if really stuck
+        else:
+            # Threshold not yet met
+            print(f"📈 Working towards threshold: {recent_success:.1%} / {current_phase_info['success_threshold']:.1%} ({(recent_success/current_phase_info['success_threshold']*100):.0f}%)")
+
+        # Special cases for time-based or phase-specific advancement
+        if not phase_complete and self.current_phase == "approach_learning" and time_in_phase > max_phase_time:
+            # Time-based advancement for approach phase if stuck
             if recent_success >= 0.10:  # At least 10% success before time-based advancement
                 phase_complete = True
                 print(f"⏰ Phase complete via time + adequate progress: {recent_success:.1%} after {time_in_phase/3600:.1f}h")
 
-        # For grasping phase, use proper grasp success metrics
-        elif self.current_phase == "grasping":
+    # For grasping phase, use grasp success metrics
+        elif not phase_complete and self.current_phase == "grasping":
             # Calculate grasp success rate
             grasp_attempts = recent_collisions.get("grasp_attempts", 0)
             successful_grasps = recent_collisions.get("successful_grasps", 0)
             grasp_success_rate = successful_grasps / max(grasp_attempts, 1) if grasp_attempts > 0 else 0
 
-            # More lenient grasping advancement since model needs to learn this new behavior
-            # 1. Any successful grasp attempts show learning progress
+            # More lenient grasping advancement
             if successful_grasps >= 3 and grasp_attempts >= 10:  # Just need some success
                 phase_complete = True
                 print(f"✅ Grasping phase complete: Learning progress - {successful_grasps} successes in {grasp_attempts} attempts ({grasp_success_rate:.1%})")
 
-            # 2. Time-based forced progression - robot needs time to learn
+            # Time-based forced progression
             elif time_in_phase > max_phase_time * 0.5:  # 3 hours for grasping learning
                 phase_complete = True
                 print(f"⏰ Grasping phase complete via time: {time_in_phase/3600:.1f} hours")
                 print(f"   Metrics: grasp_rate={grasp_success_rate:.1%} ({successful_grasps}/{grasp_attempts}), task={recent_success:.2%}")
 
-        # Advance phase if ready
+    # Advance phase if ready
         if phase_complete:
             next_phase = self._get_next_phase()
             if next_phase:
@@ -360,7 +355,7 @@ class CurriculumManager:
                 self.last_advance_time = self.phase_start_time
                 self._apply_phase_settings()
 
-                # Keep recent history for continuity
+                # Keep recent history
                 if len(self.success_history) > 100:
                     self.success_history = self.success_history[-50:]
                 if len(self.collision_history) > 100:
@@ -374,11 +369,11 @@ class CurriculumManager:
                 print(f"   New Threshold: {self.phases[self.current_phase]['success_threshold']:.1%}")
                 print("="*60)
 
-                # Reset ALL tracking for new phase - must be more aggressive
+                # Reset tracking for new phase
                 self.success_history = []  # Clear success history to start fresh
                 print(f"   ✅ Success tracking reset for new phase")
 
-                # Also clear collision history to prevent immediate re-advancement
+                # Clear collision history
                 self.collision_history = []  # Clear all collision history for fresh start
                 print(f"   ✅ Collision history completely cleared for fresh start")
                 
@@ -388,11 +383,11 @@ class CurriculumManager:
                 self.episode_successes_window = []
                 self.success_ema = 0.0
                 
-                # Reset sustained success tracking for new phase
+                # Reset sustained success tracking
                 self._sustained_success_count = 0
                 print(f"   ✅ Sustained success counter reset for new phase")
 
-                # Force curriculum level sync after phase change to ensure immediate application
+                # Force curriculum level sync after phase change
                 sync_success = self._force_curriculum_level_sync()
                 if not sync_success:
                     print(f"   ⚠️ WARNING: Curriculum level sync failed after phase change!")
@@ -400,7 +395,7 @@ class CurriculumManager:
                 # Apply new phase settings to eval environment if available
                 self._sync_with_eval_environment()
 
-                # Update env attribute for current phase so env logs reflect the new phase
+                # Update env attribute for current phase
                 try:
                     if hasattr(self.env, 'set_attr'):
                         self.env.set_attr('current_phase', self.current_phase)
@@ -414,7 +409,7 @@ class CurriculumManager:
                 except Exception:
                     pass
                 
-                #  Notify training script to reset metrics
+                # Notify training script to reset metrics
                 if self.on_phase_change_callback:
                     try:
                         self.on_phase_change_callback()
@@ -431,9 +426,9 @@ class CurriculumManager:
                     "curriculum_sync_success": sync_success
                 }
 
-        # Update phase progress
+    # Update phase progress
         if current_phase_info.get("timesteps"):
-            # Estimate progress based on time and expected duration
+            # Estimate progress
             expected_hours = current_phase_info["timesteps"] / 100_000  # Rough estimate
             self.phase_progress = min(1.0, time_in_phase / (expected_hours * 3600))
 
@@ -534,10 +529,7 @@ class CurriculumManager:
         """Apply current phase settings to environment"""
         current_phase_info = self.phases[self.current_phase]
         
-        # Set curriculum level based on phase - progressive approach learning
-        #  Match environment curriculum level ranges exactly
-        # < 0.15: NEAR SPAWN (8-14cm), 0.15-0.25: INTERMEDIATE SPAWN 1 (15-25cm), 
-        # 0.25-0.40: INTERMEDIATE SPAWN 2 (±8cm), > 0.40: FULL AREA SPAWN
+    # Set curriculum level based on phase
         phase_levels = {
             "milestone_0_percent": 0.05,   # NEAR SPAWN: 8-14cm radius (< 0.15) - 0.15m spawn_radius
             "milestone_5_percent": 0.16,   # INTERMEDIATE SPAWN 1: 15-25cm radius - 0.20m spawn_radius
@@ -552,7 +544,7 @@ class CurriculumManager:
         }
         
         target_level = phase_levels.get(self.current_phase, 0.5)
-        # Smooth large jumps in difficulty to avoid sudden spawn distance spikes
+    # Smooth large jumps in difficulty
         if self.last_curriculum_level is not None and target_level > self.last_curriculum_level:
             max_step = 0.08  # Increased from 0.05 to 0.08 to allow reasonable progression between phases
             if target_level - self.last_curriculum_level > max_step:
@@ -560,18 +552,17 @@ class CurriculumManager:
                 target_level = self.last_curriculum_level + max_step
         curriculum_level = target_level
         
-        # Handle different environment wrapper types
-        #  Use robust curriculum level setting with sync
+    # Robust curriculum level setting with sync
         success = self._set_curriculum_level_robust(curriculum_level)
         
         # Remember last applied level
         self.last_curriculum_level = curriculum_level
         
-        # Progressive domain randomization based on milestone curriculum
+    # Domain randomization based on milestone curriculum
         current_phase_info = self.phases[self.current_phase]
         enable_randomization = current_phase_info.get("domain_randomization", False)
         
-        # Handle different environment wrapper types for domain randomization
+    # Domain randomization for different wrapper types
         if hasattr(self.env, 'env_method'):
             # Direct vectorized environment - use env_method
             try:
@@ -593,10 +584,10 @@ class CurriculumManager:
         else:
             print(f"⚠️ Warning: Could not set domain randomization - no method available")
         
-        # Apply milestone-specific settings (spawn radius, object types, mass range, etc.)
+    # Apply milestone-specific settings
         self._apply_milestone_settings(current_phase_info)
         
-        # collision settings with better error handling and verification
+    # Collision settings with verification
         collision_rewards = current_phase_info["collision_rewards"]
         collision_termination = current_phase_info.get("termination_on_bad_collision", False)
         
@@ -663,7 +654,7 @@ class CurriculumManager:
             print(f"   Target rewards: {collision_rewards}")
             print(f"   Target termination: {collision_termination}")
         
-        # Final verification of all settings
+    # Final verification of all settings
         print(f"🔍 FINAL CURRICULUM VERIFICATION for {self.current_phase}:")
         self.verify_curriculum_level()
     
